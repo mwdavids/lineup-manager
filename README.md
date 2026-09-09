@@ -8,8 +8,8 @@ stored locally in your browser via `localStorage`.
 ## What it does
 
 - Manages your roster (foot + up to three positions per player).
-- Builds a fair, explainable per-period lineup plan for a 4-3-3.
-- Runs a live sideline timer with loud substitution alerts.
+- Builds a fair, explainable lineup plan for a 4-3-3 with **rolling substitution windows**.
+- Runs a live sideline timer with loud substitution alerts at every sub window.
 - Works with no internet, no account, and no other device.
 
 ## How to open it on an iPad
@@ -46,14 +46,22 @@ For a full-screen, app-like experience:
 
 ### Game Setup tab
 - Create and name a game day.
-- Set **periods** and **minutes per period** (default **4 × 12**).
+- Set **periods (halves)**, **minutes per period**, and the **substitution interval** — the
+  live total (e.g. **70 min**) updates as you type, and the sub windows per period are shown.
+- **Default: 2 × 35 min = 70 min, sub every 10 min.** One-tap **presets** for 70 min (2×35),
+  60 min (2×30), and 4×12.
+- **Substitution interval / rolling subs:** rec soccer allows rolling subs, so instead of only
+  subbing at halftime the planner opens a sub window every N minutes *within* each half (a
+  35-min half at 10 min → windows of 10/10/10/5). This is what keeps minutes near-equal and
+  the keeper getting outfield time even with only two long halves.
 - Toggle each player available/unavailable **for that game**.
 - **Generate Plan** builds the lineup.
 - Saved games list: open, duplicate, or delete prior game days.
 
 ### Plan tab
-- Grid of **position (rows) × period (columns)** showing who plays each slot.
-- Per-player **minutes summary** (total / field / GK / periods / bench) with bars.
+- Grid of **position (rows) × sub window (columns)**, grouped under each half, showing who
+  plays each slot in each window (e.g. `H1 0–10'`, `H1 10–20'`, …).
+- Per-player **minutes summary** (total / field / GK / windows / bench) with bars.
 - Inline **flags** for compromises:
   - `2` / `3` — playing a secondary/tertiary position
   - `FT` — wrong foot on a flank (LB/LW/RB/RW or left-CB)
@@ -66,10 +74,12 @@ For a full-screen, app-like experience:
 
 ### Live tab
 - Big per-period **countdown timer**: start / pause / reset / next period.
-- Prominent **SUB CARD** listing upcoming substitutions (who comes OFF ↔ who goes ON, with
-  position). ~60s before period end it triggers **sound + vibration + an on-screen alert**.
-- **Mark player OUT** (injury / left early) → automatically re-plans the remaining periods,
-  keeping periods already played.
+- Prominent **SUB CARD** listing the upcoming substitutions (who comes OFF ↔ who goes ON,
+  with position) for the **next sub window** — not just at halftime. ~60s before each window
+  it triggers **sound + vibration + an on-screen alert**, and beeps/vibrates again when the
+  window opens.
+- **Mark player OUT** (injury / left early) → automatically re-plans the remaining sub
+  windows, keeping windows already played.
 - Manual swaps allowed anytime; running **field / GK minutes** shown live.
 
 ## The auto-planner (deterministic & explainable)
@@ -79,22 +89,28 @@ Priority order:
 1. **Eligibility (hard):** a player only fills a listed position; primary is preferred over
    secondary over tertiary.
 2. **Equal field time:** minimizes the spread of total minutes across *available* players;
-   each game stands alone (no carryover).
-3. **GK relief:** with a second keeper available it aims for a ~50/50 GK split and gives
-   keepers outfield time so nobody is goal-only.
+   each game stands alone (no carryover). Rolling sub windows are what make this work with
+   long halves.
+3. **GK relief:** with a second keeper available it aims for a ~50/50 GK split and guarantees
+   each keeper at least one outfield window so nobody is goal-only. Each keeper's full-game
+   goal time is factored into the fairness balance from the first window, so keepers don't end
+   up over- or under-played.
 4. **Footedness (soft):** prefers left-footers on LB/LW/left-CB and right-footers on the
    right.
 5. **Position stability (soft):** prefers a player keep the same position while on the
    field, with position changes normally requiring a bench rest — but the planner *may*
    move an on-field player when it clearly improves fairness/coverage, and flags it.
 
-Under the hood each period is solved as a minimum-cost assignment (Hungarian algorithm)
-over eligible players, so the result is deterministic and reproducible.
+Under the hood each **sub window** is solved as a minimum-cost assignment (Hungarian
+algorithm) over eligible players, so the result is deterministic and reproducible. A typical
+full-availability **70-minute (2×35) game with a 10-min sub interval** yields near-equal
+minutes (most players within a narrow band), a **50/50 GK split with both keepers getting
+outfield time**, and substitutions that are mostly bench↔field rather than on-field shuffles.
 
-> **Roster-driven compromises are surfaced, not hidden.** For example, if only one player
-> lists **DM**, she will anchor every period (and her minutes will run high) because leaving
-> the slot empty or playing someone out of position would break eligibility. The plan makes
-> such trade-offs visible via the minutes summary and flags.
+> **Roster-driven compromises are surfaced, not hidden.** A position only one or two players
+> can fill (e.g. an RB-only player) will naturally see tighter or looser minutes because
+> leaving the slot empty or playing someone out of position would break eligibility. The plan
+> makes such trade-offs visible via the minutes summary and flags.
 
 ## Out of scope
 

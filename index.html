@@ -166,15 +166,25 @@
         </label>
       </div>
       <div class="row" style="margin-top:8px">
-        <label class="fld">Periods
-          <input id="gamePeriods" type="number" min="1" max="12" value="4" inputmode="numeric" />
+        <label class="fld">Periods (halves)
+          <input id="gamePeriods" type="number" min="1" max="12" value="2" inputmode="numeric" />
         </label>
         <label class="fld">Minutes / period
-          <input id="gameMinutes" type="number" min="1" max="45" value="12" inputmode="numeric" />
+          <input id="gameMinutes" type="number" min="1" max="60" value="35" inputmode="numeric" />
+        </label>
+        <label class="fld">Sub every (min)
+          <input id="gameSubInterval" type="number" min="1" max="60" value="10" inputmode="numeric" />
         </label>
         <div class="grow"></div>
         <button class="btn sec sm" id="newGameBtn" style="align-self:flex-end">New blank game</button>
       </div>
+      <div class="row" style="margin-top:8px">
+        <span class="muted small">Presets:</span>
+        <button class="btn sec sm" data-preset="2,35,10">70 min (2×35)</button>
+        <button class="btn sec sm" data-preset="2,30,10">60 min (2×30)</button>
+        <button class="btn sec sm" data-preset="4,12,12">4×12</button>
+      </div>
+      <div id="gameTotals" class="small" style="margin-top:10px;padding:10px;background:var(--chip);border-radius:10px;font-weight:600"></div>
     </div>
 
     <div class="panel">
@@ -211,7 +221,7 @@
     </div>
     <div class="panel">
       <div class="plan-wrap"><div id="planGrid"></div></div>
-      <div class="muted small" style="margin-top:8px">Tap a slot to substitute or swap. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field.</div>
+      <div class="muted small" style="margin-top:8px">Tap a slot to substitute or swap. Columns are sub windows. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field.</div>
     </div>
     <div class="panel">
       <h2>Minutes summary</h2>
@@ -297,7 +307,7 @@ var WARN_SECONDS = 60; // sub warning before period end
 
 /* ---------- Seed roster ---------- */
 var SEED = [
-  ['Eleanor C.','R',['GK','RW']],
+  ['Eleanor C.','R',['GK','RW','DM']],
   ['Nora D.','R',['RB','CM']],
   ['Mackenzie D.','R',['CM','CB']],
   ['Teigan E.','R',['CB','RB']],
@@ -311,7 +321,7 @@ var SEED = [
   ['Penelope T.','L',['LW']],
   ['Ayana B.','L',['LW','CM','LB']],
   ['Genevieve E.','R',['RB','LB']],
-  ['Sophia F.','R',['CM','ST']],
+  ['Sophia F.','R',['CM','DM']],
   ['Violet F.','R',['RB']],
   ['Isobel M.','R',['ST','GK']],
   ['Ryann M.','L',['LB']],
@@ -324,7 +334,7 @@ var ui = { tab:'roster', selCell:null, editPlayerId:null };
 var undoStack = [];
 
 /* ---------- Storage ---------- */
-var LS_KEY = 'lineupManager.v1';
+var LS_KEY = 'lineupManager.v2';
 function uid(p){ return (p||'id')+Math.random().toString(36).slice(2,9); }
 function save(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
@@ -430,44 +440,78 @@ function buildGkSchedule(availPlayers, P){
 }
 
 /*
-  Generate a full plan.
-  opts: { fromPeriod, fixedPeriods, startMinutes, startGkMin }
-  - fromPeriod: first period index to (re)plan (default 0)
-  - fixedPeriods: array of already-decided period assignments to keep [0..fromPeriod-1]
-  - startMinutes/startGkMin: accumulated minutes going into fromPeriod
+  Split the game into sub-window "segments". Within each period (half) we place a
+  sub opportunity every `subInterval` minutes, so rolling subs keep minutes even
+  even when periods are long (e.g. two 35-min halves). Each segment carries its
+  own duration in minutes.
+*/
+function buildSegments(game){
+  var segs=[]; var M=game.minutes; var N=Math.max(1, Math.min(M, game.subInterval||M));
+  for(var p=0;p<game.periods;p++){
+    var durs=[]; var t=0;
+    while(t<M){ var d=Math.min(N, M-t); durs.push(d); t+=d; }
+    // fold a very short trailing window into the previous one
+    if(durs.length>1){ var last=durs[durs.length-1]; if(last < N/2){ durs[durs.length-2]+=last; durs.pop(); } }
+    durs.forEach(function(d){ segs.push({period:p, dur:d}); });
+  }
+  return segs;
+}
+
+/*
+  Generate a full plan as a list of sub-window segments.
+  opts: { fromSegment, fixedSegments, startMinutes, startGkMin }
+  - fromSegment: first segment index to (re)plan (default 0)
+  - fixedSegments: already-decided segments to keep [0..fromSegment-1]
+  - startMinutes/startGkMin: accumulated minutes going into fromSegment
 */
 function generatePlan(game, opts){
   opts = opts||{};
-  var P=game.periods, M=game.minutes;
-  var fromPeriod = opts.fromPeriod||0;
   var avail = state.players.filter(function(pl){ return game.availability[pl.id]!==false; });
 
-  // Track field and GK minutes separately. GK minutes count less toward the
-  // "who should sit" fairness decision so keepers still get outfield time.
-  var GK_FAIR = 0.5;
+  // Track field and GK minutes separately. Each keeper's GK time for the WHOLE
+  // game is known up front (from the GK schedule), so we bake it into the fairness
+  // load from the very first segment — otherwise a keeper who tends goal in the
+  // 2nd half would first grab a normal share of 1st-half field time and end up
+  // over-played. GK minutes are weighted by GK_FAIR so keepers still earn some
+  // outfield time rather than being pinned to equal totals exactly.
+  var GK_FAIR = (game.gkFair!=null? game.gkFair : 0.85);
   var fldMin={}, gkMin={};
   state.players.forEach(function(pl){ fldMin[pl.id]=0; gkMin[pl.id]=0; });
   if(opts.startGkMin){ for(var k2 in opts.startGkMin) gkMin[k2]=opts.startGkMin[k2]||0; }
   if(opts.startMinutes){ for(var k in opts.startMinutes) fldMin[k]=(opts.startMinutes[k]||0)-(gkMin[k]||0); }
-  function loadOf(id){ return (fldMin[id]||0)*10 + (gkMin[id]||0)*10*GK_FAIR; }
 
-  var periods=[];
-  var gkSched = buildGkSchedule(avail, P);
+  var segMeta = buildSegments(game);
+  var fromSeg = opts.fromSegment||0;
+  var gkSched = buildGkSchedule(avail, game.periods); // one keeper per period (stable within a half)
 
-  // keep fixed periods
-  for(var fp=0; fp<fromPeriod; fp++){
-    periods[fp] = opts.fixedPeriods ? opts.fixedPeriods[fp] : {};
+  // total GK minutes each player is scheduled to tend goal across the whole game
+  var gkScheduledTotal={};
+  var periodMinutes={}; segMeta.forEach(function(s){ periodMinutes[s.period]=(periodMinutes[s.period]||0)+s.dur; });
+  for(var pp in periodMinutes){ var kid=gkSched[pp]; if(kid) gkScheduledTotal[kid]=(gkScheduledTotal[kid]||0)+periodMinutes[pp]; }
+
+  function loadOf(id){ return (fldMin[id]||0)*10 + (gkScheduledTotal[id]||0)*10*GK_FAIR; }
+  // Outfield guarantee: a player who tends goal in some OTHER period must get at
+  // least one field window in a period they are not keeping, so no keeper is ever
+  // goal-only. Strong (but not absolute) pull toward giving them that first window.
+  function keeperInsurance(pl, curGkId){
+    if((gkScheduledTotal[pl.id]||0)>0 && pl.id!==curGkId && (fldMin[pl.id]||0)===0) return -8000;
+    return 0;
   }
 
-  var prev = fromPeriod>0 ? periods[fromPeriod-1] : null;
+  var segments=[];
+  for(var fs=0; fs<fromSeg; fs++){
+    segments[fs] = opts.fixedSegments ? opts.fixedSegments[fs]
+                 : {period:segMeta[fs].period, dur:segMeta[fs].dur, slots:{}};
+  }
+  var prev = fromSeg>0 ? segments[fromSeg-1].slots : null;
 
-  for(var pi=fromPeriod; pi<P; pi++){
-    var gkId = gkSched[pi];
-    // if scheduled keeper is out (unavailable), pick another available keeper
-    if(gkId && game.availability[byId(gkId)? gkId : '']===false) gkId=null;
+  for(var si=fromSeg; si<segMeta.length; si++){
+    var period=segMeta[si].period, dur=segMeta[si].dur;
+    var gkId = gkSched[period];
+    if(gkId && game.availability[gkId]===false) gkId=null;
     if(!gkId){
       var kp = avail.filter(function(pl){ return pl.positions.indexOf('GK')>=0; });
-      gkId = kp.length? kp[pi % kp.length].id : null;
+      gkId = kp.length? kp[period % kp.length].id : null;
     }
 
     var candidates = avail.filter(function(pl){ return pl.id!==gkId; });
@@ -476,32 +520,28 @@ function generatePlan(game, opts){
     var assign = {};
 
     if(m>=n){
-      // cost matrix 1-indexed [1..n][1..m]
       var cost=[]; for(var r=0;r<=n;r++) cost.push(new Array(m+1).fill(0));
       for(var ri=1;ri<=n;ri++){
         var slot=OUTFIELD_SLOTS[ri-1];
         for(var ci=1;ci<=m;ci++){
-          var pl=candidates[ci-1];
-          cost[ri][ci]=cellCost(pl, slot, pi, loadOf, prev, ci);
+          var cc=cellCost(candidates[ci-1], slot, si, loadOf, prev, ci);
+          if(cc<BIG) cc+=keeperInsurance(candidates[ci-1], gkId);
+          cost[ri][ci]=cc;
         }
       }
       var r2c = hungarian(cost, n, m);
       for(var ri2=1;ri2<=n;ri2++){
         var col=r2c[ri2];
         var slotKey=OUTFIELD_SLOTS[ri2-1].key;
-        if(col>0 && cost[ri2][col]<BIG){
-          assign[slotKey]=candidates[col-1].id;
-        } else {
-          assign[slotKey]=null; // no eligible player
-        }
+        assign[slotKey] = (col>0 && cost[ri2][col]<BIG)? candidates[col-1].id : null;
       }
     } else {
-      // fewer candidates than slots: fill greedily, leave rest empty
       var pool=candidates.slice();
       OUTFIELD_SLOTS.forEach(function(slot){
         var best=-1,bestc=BIG;
         for(var q=0;q<pool.length;q++){
-          var c=cellCost(pool[q],slot,pi,loadOf,prev,q+1);
+          var c=cellCost(pool[q],slot,si,loadOf,prev,q+1);
+          if(c<BIG) c+=keeperInsurance(pool[q], gkId);
           if(c<bestc){bestc=c;best=q;}
         }
         if(best>=0 && bestc<BIG){ assign[slot.key]=pool[best].id; pool.splice(best,1);} 
@@ -511,17 +551,17 @@ function generatePlan(game, opts){
 
     assign['GK']=gkId;
 
-    // accrue minutes
+    // accrue minutes by this segment's duration
     SLOTS.forEach(function(s){
       var pid=assign[s.key];
-      if(pid){ if(s.key==='GK') gkMin[pid]+=M; else fldMin[pid]+=M; }
+      if(pid){ if(s.key==='GK') gkMin[pid]+=dur; else fldMin[pid]+=dur; }
     });
 
-    periods[pi]=assign;
+    segments[si]={period:period, dur:dur, slots:assign};
     prev=assign;
   }
 
-  return { periods:periods, generatedAt:Date.now() };
+  return { segments:segments, periods:game.periods, minutes:game.minutes, subInterval:game.subInterval, generatedAt:Date.now() };
 }
 
 function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex){
@@ -546,35 +586,34 @@ function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex){
 
 /* ---------- Stats & flags from a plan ---------- */
 function computeStats(game){
-  var plan=game.plan; var M=game.minutes;
+  var plan=game.plan;
   var stat={};
   state.players.forEach(function(pl){
     if(game.availability[pl.id]!==false)
-      stat[pl.id]={id:pl.id, min:0, gk:0, field:0, periods:0, bench:0};
+      stat[pl.id]={id:pl.id, min:0, gk:0, field:0, stints:0, bench:0};
   });
-  if(!plan) return stat;
-  var P=plan.periods.length;
-  for(var pi=0;pi<P;pi++){
-    var ap=plan.periods[pi]; var onField={};
+  if(!plan || !plan.segments) return stat;
+  plan.segments.forEach(function(seg){
+    var onField={};
     SLOTS.forEach(function(s){
-      var pid=ap[s.key]; if(!pid||!stat[pid]) return;
+      var pid=seg.slots[s.key]; if(!pid||!stat[pid]) return;
       onField[pid]=true;
-      stat[pid].min+=M; stat[pid].periods++;
-      if(s.key==='GK') stat[pid].gk+=M; else stat[pid].field+=M;
+      stat[pid].min+=seg.dur; stat[pid].stints++;
+      if(s.key==='GK') stat[pid].gk+=seg.dur; else stat[pid].field+=seg.dur;
     });
     for(var id in stat){ if(!onField[id]) stat[id].bench++; }
-  }
+  });
   return stat;
 }
 
 function computeFlags(game){
-  var plan=game.plan; if(!plan) return {};
-  var flags={}; var P=plan.periods.length;
+  var plan=game.plan; if(!plan || !plan.segments) return {};
+  var flags={};
   var stat=computeStats(game);
-  for(var pi=0;pi<P;pi++){
-    var ap=plan.periods[pi];
+  var halfGame = (game.periods*game.minutes)/2;
+  plan.segments.forEach(function(seg, si){
     SLOTS.forEach(function(s){
-      var pid=ap[s.key]; if(!pid) return;
+      var pid=seg.slots[s.key]; if(!pid) return;
       var pl=byId(pid); if(!pl) return;
       var f=[];
       var rank=eligRank(pl,s.pos);
@@ -584,19 +623,18 @@ function computeFlags(game){
       if(footMismatch(pl,s)) f.push({t:'FT',cls:'foot',title:'Wrong foot on flank'});
       if(s.key==='GK'){
         var st=stat[pid];
-        var gkPeriods = st? st.gk/game.minutes : 0;
-        if(st && st.field===0 && st.periods>0) f.push({t:'GK',cls:'gk',title:'Keeper-only — no outfield time'});
-        else if(gkPeriods > P/2) f.push({t:'GK',cls:'gk',title:'Keeps goal more than half the game'});
+        if(st && st.field===0 && st.stints>0) f.push({t:'GK',cls:'gk',title:'Keeper-only — no outfield time'});
+        else if(st && st.gk > halfGame) f.push({t:'GK',cls:'gk',title:'Keeps goal more than half the game'});
       }
-      // moved on field (consecutive different outfield slot)
-      if(pi>0 && s.key!=='GK'){
-        var pp=plan.periods[pi-1]; var prevKey=null;
+      // moved on field (consecutive segment, different outfield slot, no bench rest)
+      if(si>0 && s.key!=='GK'){
+        var pp=plan.segments[si-1].slots; var prevKey=null;
         for(var k in pp){ if(pp[k]===pid){prevKey=k;break;} }
-        if(prevKey && prevKey!=='GK' && prevKey!==s.key) f.push({t:'↔',cls:'move',title:'Moved position without rest'});
+        if(prevKey && prevKey!=='GK' && prevKey!==s.key) f.push({t:'↔',cls:'move',title:'Moved position without a bench rest'});
       }
-      if(f.length) flags[pi+'|'+s.key]=f;
+      if(f.length) flags[si+'|'+s.key]=f;
     });
-  }
+  });
   return flags;
 }
 
@@ -708,7 +746,7 @@ function renderSavedGames(){
   state.games.slice().reverse().forEach(function(g){
     var row=el('div','listrow');
     var nm=el('div','nm'); nm.textContent=g.name||'(unnamed)';
-    var meta=el('div','muted small'); meta.textContent=g.periods+'×'+g.minutes+'min · '+(g.plan?'planned':'no plan')+(g.locked?' · 🔒':'');
+    var meta=el('div','muted small'); meta.textContent=g.periods+'×'+g.minutes+'min ('+(g.periods*g.minutes)+"') · sub "+(g.subInterval||g.minutes)+"' · "+(g.plan?'planned':'no plan')+(g.locked?' · 🔒':'');
     nm.appendChild(meta); row.appendChild(nm);
     if(g.id===state.currentGameId){ row.appendChild(el('span','pill','current')); }
     var open=el('button','btn sm sec','Open'); open.onclick=function(){ state.currentGameId=g.id; save(); loadGameIntoSetup(); switchTab(g.plan?'plan':'setup'); };
@@ -729,14 +767,25 @@ function renderSavedGames(){
 function loadGameIntoSetup(){
   var g=currentGame();
   document.getElementById('gameName').value = g? (g.name||'') : '';
-  document.getElementById('gamePeriods').value = g? g.periods : 4;
-  document.getElementById('gameMinutes').value = g? g.minutes : 12;
-  updateGameLabel();
+  document.getElementById('gamePeriods').value = g? g.periods : 2;
+  document.getElementById('gameMinutes').value = g? g.minutes : 35;
+  document.getElementById('gameSubInterval').value = g? (g.subInterval||10) : 10;
+  updateGameLabel(); renderGameTotals();
   renderAvailability(); renderSavedGames();
 }
 function updateGameLabel(){
   var g=currentGame();
   document.getElementById('gameLabel').textContent = g? ('4-3-3 · '+(g.name||'Game')) : '4-3-3 · U13';
+}
+function renderGameTotals(){
+  var host=document.getElementById('gameTotals'); if(!host) return;
+  var P=Math.max(1,Math.min(12, parseInt(document.getElementById('gamePeriods').value,10)||2));
+  var M=Math.max(1,Math.min(60, parseInt(document.getElementById('gameMinutes').value,10)||35));
+  var N=Math.max(1,Math.min(M, parseInt(document.getElementById('gameSubInterval').value,10)||M));
+  var windows=0, t=0; var durs=[]; while(t<M){ var d=Math.min(N,M-t); durs.push(d); t+=d; }
+  if(durs.length>1){ var last=durs[durs.length-1]; if(last<N/2){ durs[durs.length-2]+=last; durs.pop(); } }
+  windows=durs.length;
+  host.innerHTML='<b>'+(P*M)+' min total</b> — '+P+' × '+M+" min · sub windows: "+windows+'/period ('+durs.join("', ")+"')";
 }
 
 function ensureGame(){
@@ -745,14 +794,15 @@ function ensureGame(){
     g=newGame();
   }
   g.name=document.getElementById('gameName').value.trim()||g.name||('Game '+new Date().toLocaleDateString());
-  g.periods=Math.max(1,Math.min(12, parseInt(document.getElementById('gamePeriods').value,10)||4));
-  g.minutes=Math.max(1,Math.min(45, parseInt(document.getElementById('gameMinutes').value,10)||12));
+  g.periods=Math.max(1,Math.min(12, parseInt(document.getElementById('gamePeriods').value,10)||2));
+  g.minutes=Math.max(1,Math.min(60, parseInt(document.getElementById('gameMinutes').value,10)||35));
+  g.subInterval=Math.max(1,Math.min(g.minutes, parseInt(document.getElementById('gameSubInterval').value,10)||g.minutes));
   save();
   return g;
 }
 function newGame(){
   var avail={}; state.players.forEach(function(p){ avail[p.id]=true; });
-  var g={ id:uid('g'), name:'', date:Date.now(), periods:4, minutes:12, availability:avail, plan:null, locked:false, live:{period:0} };
+  var g={ id:uid('g'), name:'', date:Date.now(), periods:2, minutes:35, subInterval:10, availability:avail, plan:null, locked:false, live:{period:0} };
   state.games.push(g); state.currentGameId=g.id; save();
   return g;
 }
@@ -768,6 +818,18 @@ function duplicateGame(id){
 }
 
 /* ----- Plan ----- */
+function periodName(g, p){ return (g.periods===2? 'Half ':'P') + (p+1); }
+// annotate each global segment with its time range within its period
+function segInfo(plan){
+  var out=[]; var startByPeriod={};
+  plan.segments.forEach(function(seg, gi){
+    var s = startByPeriod[seg.period]||0;
+    out.push({ gi:gi, period:seg.period, dur:seg.dur, startMin:s, endMin:s+seg.dur });
+    startByPeriod[seg.period]=s+seg.dur;
+  });
+  return out;
+}
+
 function renderPlan(){
   var g=currentGame();
   var host=document.getElementById('planGrid');
@@ -775,7 +837,7 @@ function renderPlan(){
   var meta=document.getElementById('planMeta');
   var lockPill=document.getElementById('lockPill');
   var lockBtn=document.getElementById('lockBtn');
-  if(!g || !g.plan){
+  if(!g || !g.plan || !g.plan.segments){
     host.innerHTML='<div class="muted">No plan yet. Go to Setup and tap “Generate Plan”.</div>';
     document.getElementById('planSummary').innerHTML='';
     title.textContent='Plan'; meta.textContent=''; lockPill.style.display='none';
@@ -785,34 +847,48 @@ function renderPlan(){
   var stat=computeStats(g);
   var mins=Object.keys(stat).map(function(k){return stat[k].min;});
   var spread = mins.length? (Math.max.apply(null,mins)-Math.min.apply(null,mins)) : 0;
-  meta.textContent = g.periods+' periods × '+g.minutes+' min · '+Object.keys(stat).length+' available · minutes spread '+spread+' min';
+  var perHalf = g.plan.segments.filter(function(s){return s.period===0;}).length;
+  meta.textContent = g.periods+' × '+g.minutes+' min = '+(g.periods*g.minutes)+' min total · sub every '
+    +(g.subInterval||g.minutes)+' min ('+perHalf+' window'+(perHalf>1?'s':'')+'/period) · '
+    +Object.keys(stat).length+' available · minutes spread '+spread+' min';
   lockPill.style.display = g.locked? 'inline-block':'none';
   lockBtn.textContent = g.locked? 'Unlock plan':'Lock plan';
 
   var flags=computeFlags(g);
-  var P=g.plan.periods.length;
+  var info=segInfo(g.plan);
   var tbl=el('table','plan');
-  var thead=el('thead'); var htr=el('tr'); htr.appendChild(el('th','','Slot'));
-  for(var p=0;p<P;p++) htr.appendChild(el('th','','P'+(p+1)));
-  thead.appendChild(htr); tbl.appendChild(thead);
+  // header row 1: period groups
+  var thead=el('thead');
+  var htr1=el('tr'); var slotTh=el('th','','Slot'); slotTh.rowSpan=2; htr1.appendChild(slotTh);
+  var pCounts={}; info.forEach(function(x){ pCounts[x.period]=(pCounts[x.period]||0)+1; });
+  Object.keys(pCounts).map(Number).sort(function(a,b){return a-b;}).forEach(function(p){
+    var th=el('th','', periodName(g,p)+' · '+g.minutes+"'"); th.colSpan=pCounts[p]; th.style.textAlign='center';
+    htr1.appendChild(th);
+  });
+  thead.appendChild(htr1);
+  // header row 2: sub-window time ranges
+  var htr2=el('tr');
+  info.forEach(function(x){ htr2.appendChild(el('th','', x.startMin+'–'+x.endMin+"'")); });
+  thead.appendChild(htr2);
+  tbl.appendChild(thead);
+
   var tb=el('tbody');
   SLOTS.forEach(function(slot){
     var tr=el('tr');
     var th=el('th'); th.appendChild(el('span','slotlab',slot.label)); tr.appendChild(th);
-    for(var pi=0;pi<P;pi++){
-      (function(pi){
+    info.forEach(function(x){
+      (function(si){
         var td=el('td');
-        var pid=g.plan.periods[pi][slot.key];
+        var pid=g.plan.segments[si].slots[slot.key];
         var cell=el('div','cell'+(pid?'':' empty'));
-        var who=el('div','who', pid? shortName(byId(pid)) : '—');
-        cell.appendChild(who);
-        var fl=flags[pi+'|'+slot.key];
-        if(fl){ var fw=el('div','flags'); fl.forEach(function(x){ var b=el('span','fl '+x.cls,x.t); b.title=x.title; fw.appendChild(b); }); cell.appendChild(fw); }
-        if(ui.selCell && ui.selCell.pi===pi && ui.selCell.key===slot.key) td.classList.add('sel');
-        cell.onclick=function(){ if(g.locked){ toast('Plan locked'); return; } onCellTap(pi, slot.key); };
+        cell.appendChild(el('div','who', pid? shortName(byId(pid)) : '—'));
+        var fl=flags[si+'|'+slot.key];
+        if(fl){ var fw=el('div','flags'); fl.forEach(function(y){ var b=el('span','fl '+y.cls,y.t); b.title=y.title; fw.appendChild(b); }); cell.appendChild(fw); }
+        if(ui.selCell && ui.selCell.si===si && ui.selCell.key===slot.key) td.classList.add('sel');
+        cell.onclick=function(){ if(g.locked){ toast('Plan locked'); return; } onCellTap(si, slot.key); };
         td.appendChild(cell); tr.appendChild(td);
-      })(pi);
-    }
+      })(x.gi);
+    });
     tb.appendChild(tr);
   });
   tbl.appendChild(tb);
@@ -828,7 +904,7 @@ function renderPlanSummary(g, stat){
   arr.sort(function(a,b){ return b.min-a.min || byId(a.id).name.localeCompare(byId(b.id).name); });
   var maxMin=Math.max.apply(null, arr.map(function(a){return a.min;}).concat([1]));
   var tbl=el('table','sumtable');
-  var head=el('tr'); ['Player','Total','Field','GK','Per','Bench',''].forEach(function(h){ head.appendChild(el('th','',h)); });
+  var head=el('tr'); ['Player','Total','Field','GK','Win','Bench',''].forEach(function(h){ head.appendChild(el('th','',h)); });
   tbl.appendChild(head);
   arr.forEach(function(s){
     var tr=el('tr');
@@ -836,7 +912,7 @@ function renderPlanSummary(g, stat){
     tr.appendChild(el('td','',s.min+"'"));
     tr.appendChild(el('td','',s.field+"'"));
     tr.appendChild(el('td','',s.gk?(s.gk+"'"):'—'));
-    tr.appendChild(el('td','',String(s.periods)));
+    tr.appendChild(el('td','',String(s.stints)));
     tr.appendChild(el('td','',String(s.bench)));
     var bt=el('td',''); var bar=el('div','bar'); var sp=el('span'); sp.style.width=Math.round(s.min/maxMin*100)+'%'; bar.appendChild(sp); bt.appendChild(bar); tr.appendChild(bt);
     tbl.appendChild(tr);
@@ -845,21 +921,24 @@ function renderPlanSummary(g, stat){
 }
 
 /* Cell tap -> substitution sheet */
-function onCellTap(pi, slotKey){
+function onCellTap(si, slotKey){
   var g=currentGame();
   var slot=SLOT_BY_KEY[slotKey];
-  var curId=g.plan.periods[pi][slotKey];
+  var seg=g.plan.segments[si];
+  var info=segInfo(g.plan)[si];
+  var curId=seg.slots[slotKey];
+  var label=periodName(g,seg.period)+' · '+info.startMin+'–'+info.endMin+"'";
   var sheet=document.getElementById('sheet'); sheet.innerHTML='';
-  sheet.appendChild(el('h3',null,'P'+(pi+1)+' · '+slot.label + (curId? ' — '+shortName(byId(curId)) : ' — empty')));
+  sheet.appendChild(el('h3',null,label+' · '+slot.label + (curId? ' — '+shortName(byId(curId)) : ' — empty')));
 
-  // Who is on field this period
-  var onFieldIds={}; SLOTS.forEach(function(s){ var id=g.plan.periods[pi][s.key]; if(id) onFieldIds[id]=s.key; });
+  // Who is on field this segment
+  var onFieldIds={}; SLOTS.forEach(function(s){ var id=seg.slots[s.key]; if(id) onFieldIds[id]=s.key; });
   var availIds = state.players.filter(function(p){return g.availability[p.id]!==false;}).map(function(p){return p.id;});
   var benchIds = availIds.filter(function(id){ return !onFieldIds[id]; });
 
   // Bench substitutions
   sheet.appendChild(el('div','fld small','Sub in from bench')).style.marginTop='4px';
-  if(!benchIds.length) sheet.appendChild(el('div','muted small','No bench players this period.'));
+  if(!benchIds.length) sheet.appendChild(el('div','muted small','No bench players this window.'));
   benchIds.map(byId).sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(pl){
     var c=el('div','choice');
     var av=el('div','avatar',initials(pl.name)); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
@@ -867,7 +946,7 @@ function onCellTap(pi, slotKey){
     var e=eligRank(pl,slot.pos); var note=(e<0?'out of position':(e===0?'primary':(e===1?'secondary':'tertiary')));
     if(footMismatch(pl,slot)) note+=' · wrong foot';
     nm.appendChild(el('div','muted small', note)); c.appendChild(nm);
-    c.onclick=function(){ pushUndo(); doSub(pi, slotKey, pl.id); closeSheet(); };
+    c.onclick=function(){ pushUndo(); doSub(si, slotKey, pl.id); closeSheet(); };
     sheet.appendChild(c);
   });
 
@@ -875,64 +954,79 @@ function onCellTap(pi, slotKey){
   sheet.appendChild(el('div','fld small','Swap position with')).style.marginTop='8px';
   SLOTS.forEach(function(s){
     if(s.key===slotKey) return;
-    var oid=g.plan.periods[pi][s.key]; if(!oid) return;
+    var oid=seg.slots[s.key]; if(!oid) return;
     var pl=byId(oid);
     var c=el('div','choice');
     c.appendChild(el('div','pill',s.label));
     var nm=el('div','grow'); nm.appendChild(el('div','',shortName(pl))); c.appendChild(nm);
-    c.onclick=function(){ pushUndo(); swapSlots(pi, slotKey, s.key); closeSheet(); };
+    c.onclick=function(){ pushUndo(); swapSlots(si, slotKey, s.key); closeSheet(); };
     sheet.appendChild(c);
   });
 
   if(curId){
     var rm=el('button','btn sec','Clear this slot'); rm.style.marginTop='10px'; rm.style.width='100%';
-    rm.onclick=function(){ pushUndo(); g.plan.periods[pi][slotKey]=null; save(); renderPlan(); renderLive(); closeSheet(); };
+    rm.onclick=function(){ pushUndo(); seg.slots[slotKey]=null; save(); renderPlan(); renderLive(); closeSheet(); };
     sheet.appendChild(rm);
   }
   var cancel=el('button','btn ghost','Cancel'); cancel.style.marginTop='8px'; cancel.style.width='100%'; cancel.onclick=closeSheet;
   sheet.appendChild(cancel);
   openSheet();
 }
-function doSub(pi, slotKey, newId){
+function doSub(si, slotKey, newId){
   var g=currentGame();
-  // if newId currently on field elsewhere this period, swap; else place (displaced -> bench)
-  var period=g.plan.periods[pi];
-  var otherKey=null; for(var k in period){ if(period[k]===newId){ otherKey=k; break; } }
-  var displaced=period[slotKey];
-  period[slotKey]=newId;
-  if(otherKey) period[otherKey]=displaced; // swap
+  var slots=g.plan.segments[si].slots;
+  var otherKey=null; for(var k in slots){ if(slots[k]===newId){ otherKey=k; break; } }
+  var displaced=slots[slotKey];
+  slots[slotKey]=newId;
+  if(otherKey) slots[otherKey]=displaced; // swap
   save(); renderPlan(); renderLive(); toast('Substituted');
 }
-function swapSlots(pi, a, b){
-  var g=currentGame(); var period=g.plan.periods[pi];
-  var t=period[a]; period[a]=period[b]; period[b]=t;
+function swapSlots(si, a, b){
+  var g=currentGame(); var slots=g.plan.segments[si].slots;
+  var t=slots[a]; slots[a]=slots[b]; slots[b]=t;
   save(); renderPlan(); renderLive(); toast('Swapped');
 }
 
 /* ----- Live ----- */
-var timer={ remaining:0, running:false, handle:null, warned:false };
+var timer={ remaining:0, running:false, handle:null, warned:false, segLocal:0, seg:0 };
 
 function currentLivePeriod(){ var g=currentGame(); return g && g.live? (g.live.period||0):0; }
+// global segments belonging to a period, with second offsets within the period
+function periodSegs(g, period){
+  return segInfo(g.plan).filter(function(x){return x.period===period;}).map(function(x){
+    return { gi:x.gi, startSec:x.startMin*60, endSec:x.endMin*60, startMin:x.startMin, endMin:x.endMin };
+  });
+}
+function firstSegOfPeriod(g, period){ var s=periodSegs(g,period); return s.length? s[0].gi : 0; }
+function currentLiveSeg(){
+  var g=currentGame(); if(!g||!g.plan||!g.plan.segments) return 0;
+  if(g.plan.segments[timer.seg]) return timer.seg;
+  return firstSegOfPeriod(g, currentLivePeriod());
+}
 
 function renderLive(){
   var g=currentGame();
   document.getElementById('liveGame').textContent = g? (g.name||'Game') : '—';
   var pi=currentLivePeriod();
-  document.getElementById('livePeriodPill').textContent = g? ('Period '+(pi+1)+' / '+g.periods) : 'Period —';
-  if(!g || !g.plan){
+  document.getElementById('livePeriodPill').textContent = g? (periodName(g,pi)+' / '+g.periods) : '—';
+  if(!g || !g.plan || !g.plan.segments){
     document.getElementById('liveField').innerHTML='<div class="muted">No plan. Generate one first.</div>';
     document.getElementById('liveMinutes').innerHTML='';
     document.getElementById('subCardWrap').innerHTML='';
     return;
   }
-  renderLiveField(g, pi);
-  renderLiveMinutes(g, pi);
-  renderSubCard(g, pi, timer.remaining);
+  var gi=currentLiveSeg();
+  renderLiveField(g, gi);
+  renderLiveMinutes(g, gi);
+  renderSubCard(g, gi);
 }
 
-function renderLiveField(g, pi){
+function renderLiveField(g, gi){
   var host=document.getElementById('liveField'); host.innerHTML='';
-  var ap=g.plan.periods[pi]||{};
+  var seg=g.plan.segments[gi]||{slots:{}};
+  var info=segInfo(g.plan)[gi];
+  if(info){ host.appendChild(el('div','muted small','On field · '+periodName(g,seg.period)+' '+info.startMin+'–'+info.endMin+"'")); }
+  var ap=seg.slots||{};
   var wrap=el('div','livemin');
   SLOTS.forEach(function(s){
     var pid=ap[s.key];
@@ -944,14 +1038,14 @@ function renderLiveField(g, pi){
   host.appendChild(wrap);
 }
 
-function renderLiveMinutes(g, pi){
+function renderLiveMinutes(g, gi){
   var host=document.getElementById('liveMinutes'); host.innerHTML='';
-  // running minutes = completed periods (0..pi-1) fully + current period counts as in progress (we count completed only for clarity + include current as playing)
+  // running minutes: all segments up to & including the active window (assumes it completes)
   var stat={};
   state.players.forEach(function(pl){ if(g.availability[pl.id]!==false) stat[pl.id]={min:0,gk:0}; });
-  for(var p=0;p<=pi && p<g.plan.periods.length;p++){
-    var ap=g.plan.periods[p];
-    SLOTS.forEach(function(s){ var pid=ap[s.key]; if(pid&&stat[pid]){ stat[pid].min+=g.minutes; if(s.key==='GK')stat[pid].gk+=g.minutes; } });
+  for(var s=0;s<=gi && s<g.plan.segments.length;s++){
+    var seg=g.plan.segments[s];
+    SLOTS.forEach(function(sl){ var pid=seg.slots[sl.key]; if(pid&&stat[pid]){ stat[pid].min+=seg.dur; if(sl.key==='GK')stat[pid].gk+=seg.dur; } });
   }
   var arr=Object.keys(stat).map(function(k){return {id:k,min:stat[k].min,gk:stat[k].gk};});
   arr.sort(function(a,b){return b.min-a.min;});
@@ -963,9 +1057,10 @@ function renderLiveMinutes(g, pi){
   });
 }
 
-function computeSubs(g, fromPi){
-  var toPi=fromPi+1; if(toPi>=g.plan.periods.length) return null;
-  var a=g.plan.periods[fromPi], b=g.plan.periods[toPi];
+// subs between global segment gi and gi+1 (spans halftime correctly)
+function computeSubs(g, gi){
+  var to=gi+1; if(to>=g.plan.segments.length) return null;
+  var a=g.plan.segments[gi].slots, b=g.plan.segments[to].slots;
   var changes=[];
   SLOTS.forEach(function(s){
     if(a[s.key]!==b[s.key]) changes.push({slot:s.label, off:a[s.key], on:b[s.key]});
@@ -973,13 +1068,17 @@ function computeSubs(g, fromPi){
   return changes;
 }
 
-function renderSubCard(g, pi, remaining){
+function renderSubCard(g, gi){
   var host=document.getElementById('subCardWrap'); host.innerHTML='';
-  var subs=computeSubs(g, pi);
+  var subs=computeSubs(g, gi);
   if(!subs || !subs.length) return;
-  var near = timer.running && remaining>0 && remaining<=WARN_SECONDS;
+  var segs=periodSegs(g, currentLivePeriod());
+  var cur=segs[timer.segLocal]; var toBoundary = cur? (cur.endSec-((g.minutes*60)-timer.remaining)) : 999;
+  var near = timer.running && toBoundary>0 && toBoundary<=WARN_SECONDS;
+  var nextInfo=segInfo(g.plan)[gi+1];
+  var when = nextInfo? (periodName(g,nextInfo.period)+' '+nextInfo.startMin+"'") : '';
   var card=el('div', near?'subcard':'panel');
-  card.appendChild(el('h2', null, near? ('⚠️ SUBS in '+remaining+'s — end of Period '+(pi+1)) : ('Upcoming subs → Period '+(pi+2))));
+  card.appendChild(el('h2', null, near? ('⚠️ SUBS in '+toBoundary+'s') : ('Upcoming subs → '+when)));
   subs.forEach(function(c){
     var r=el('div','subrow');
     r.appendChild(el('span','pill',c.slot));
@@ -1003,15 +1102,32 @@ function setClock(){
   c.classList.toggle('done', timer.remaining<=0);
 }
 function initClock(){
-  var g=currentGame(); timer.remaining = g? g.minutes*60 : 0; timer.warned=false; setClock(); renderLive();
+  var g=currentGame();
+  timer.remaining = g? g.minutes*60 : 0; timer.warned=false; timer.segLocal=0;
+  timer.seg = g && g.plan? firstSegOfPeriod(g, currentLivePeriod()) : 0;
+  setClock(); renderLive();
 }
 function tick(){
   if(!timer.running) return;
   timer.remaining--;
-  if(timer.remaining===WARN_SECONDS){ triggerSubAlert(); }
+  var g=currentGame();
+  if(g && g.plan){
+    var segs=periodSegs(g, currentLivePeriod());
+    var elapsed=(g.minutes*60)-timer.remaining;
+    var cur=segs[timer.segLocal];
+    if(cur){
+      var toBoundary=cur.endSec-elapsed;
+      if(toBoundary===WARN_SECONDS){ triggerSubAlert(); }
+      if(toBoundary<=0 && timer.segLocal < segs.length-1){
+        timer.segLocal++; timer.seg=segs[timer.segLocal].gi;
+        beep(2); vibrate([200,100,200]); toast('🔄 Sub window — make the subs');
+        renderLive();
+      }
+    }
+  }
   if(timer.remaining<=0){ timer.remaining=0; timer.running=false; clearInterval(timer.handle); alertEnd(); }
   setClock();
-  var g=currentGame(); if(g) renderSubCard(g, currentLivePeriod(), timer.remaining);
+  if(g && g.plan) renderSubCard(g, currentLiveSeg());
 }
 function startTimer(){
   if(timer.running) return;
@@ -1024,7 +1140,7 @@ function resetTimer(){ pauseTimer(); initClock(); }
 function nextPeriod(){
   var g=currentGame(); if(!g) return;
   pauseTimer();
-  if(g.live.period < g.plan.periods.length-1){ g.live.period++; save(); }
+  if(g.live.period < g.plan.segments[g.plan.segments.length-1].period){ g.live.period++; save(); }
   else { toast('Last period'); }
   initClock();
 }
@@ -1050,27 +1166,27 @@ function beep(times){
 }
 function vibrate(pattern){ try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(e){} }
 function triggerSubAlert(){
-  var g=currentGame(); var subs=computeSubs(g, currentLivePeriod());
+  var g=currentGame(); var subs=computeSubs(g, currentLiveSeg());
   if(subs && subs.length){ beep(2); vibrate([200,100,200]); toast('⏱️ Subs coming up!'); }
 }
 function alertEnd(){ beep(3); vibrate([300,120,300,120,300]); toast('Period over — tap Next period'); }
 
-/* Mark player OUT mid-game -> replan remaining periods */
+/* Mark player OUT mid-game -> replan remaining sub windows */
 function openMarkOut(){
   var g=currentGame(); if(!g||!g.plan){ toast('No plan'); return; }
-  var pi=currentLivePeriod();
+  var gi=currentLiveSeg();
   var sheet=document.getElementById('sheet'); sheet.innerHTML='';
   sheet.appendChild(el('h3',null,'Mark player OUT (injury / left)'));
-  sheet.appendChild(el('div','muted small','Removes the player for the rest of the game and re-plans remaining periods. Periods up to and including the current one are kept.'));
+  sheet.appendChild(el('div','muted small','Removes the player for the rest of the game and re-plans the remaining sub windows. Windows up to and including the current one are kept.'));
   var availPlayers = state.players.filter(function(p){return g.availability[p.id]!==false;});
   availPlayers.sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(pl){
     var c=el('div','choice');
     var av=el('div','avatar',initials(pl.name)); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
     c.appendChild(el('div','grow', pl.name));
     c.onclick=function(){
-      if(!confirm('Mark '+pl.name+' OUT and re-plan from period '+(pi+2)+'?')) return;
+      if(!confirm('Mark '+pl.name+' OUT and re-plan the rest of the game?')) return;
       pushUndo();
-      markPlayerOut(pl.id, pi);
+      markPlayerOut(pl.id, gi);
       closeSheet();
     };
     sheet.appendChild(c);
@@ -1079,42 +1195,41 @@ function openMarkOut(){
   sheet.appendChild(cancel);
   openSheet();
 }
-function markPlayerOut(pid, currentPi){
+function markPlayerOut(pid, currentSeg){
   var g=currentGame();
   g.availability[pid]=false;
-  // keep periods 0..currentPi, but remove the out player from current & future filled periods
-  var fromPeriod=currentPi+1;
-  // compute accumulated minutes through currentPi (kept periods)
+  var fromSeg=currentSeg+1;
   var startMin={}, startGk={};
   state.players.forEach(function(p){ startMin[p.id]=0; startGk[p.id]=0; });
   var fixed=[];
-  for(var p=0;p<fromPeriod;p++){
-    var ap=Object.assign({}, g.plan.periods[p]);
-    // if the out player is on field in a kept period, leave them (already played) — but null out current period future presence? They already played those minutes.
-    SLOTS.forEach(function(s){ var id=ap[s.key]; if(id){ startMin[id]+=g.minutes; if(s.key==='GK') startGk[id]+=g.minutes; } });
-    fixed.push(ap);
+  for(var s=0;s<fromSeg && s<g.plan.segments.length;s++){
+    var seg=g.plan.segments[s];
+    var copy={period:seg.period, dur:seg.dur, slots:Object.assign({}, seg.slots)};
+    SLOTS.forEach(function(sl){ var id=copy.slots[sl.key]; if(id){ startMin[id]+=seg.dur; if(sl.key==='GK') startGk[id]+=seg.dur; } });
+    fixed.push(copy);
   }
-  var np=generatePlan(g, { fromPeriod:fromPeriod, fixedPeriods:fixed, startMinutes:startMin, startGkMin:startGk });
+  var np=generatePlan(g, { fromSegment:fromSeg, fixedSegments:fixed, startMinutes:startMin, startGkMin:startGk });
   g.plan=np; save();
   renderAvailability(); renderPlan(); renderLive();
-  toast('Re-planned remaining periods');
+  toast('Re-planned remaining windows');
 }
 
 /* ----- Export / Print ----- */
 function planToText(g){
   var lines=[];
   lines.push('LINEUP — '+(g.name||'Game'));
-  lines.push('Formation 4-3-3 · '+g.periods+' periods × '+g.minutes+' min');
+  lines.push('Formation 4-3-3 · '+g.periods+' × '+g.minutes+' min = '+(g.periods*g.minutes)+' min · sub every '+(g.subInterval||g.minutes)+' min');
   lines.push('');
+  var info=segInfo(g.plan);
   var header='Slot'.padEnd(8);
-  for(var p=0;p<g.plan.periods.length;p++) header+=('P'+(p+1)).padEnd(14);
+  info.forEach(function(x){ header+=(periodName(g,x.period).replace('Half ','H').replace('P','P')+' '+x.startMin+'-'+x.endMin).padEnd(14); });
   lines.push(header);
   SLOTS.forEach(function(s){
     var row=s.label.padEnd(8);
-    for(var pi=0;pi<g.plan.periods.length;pi++){
-      var pid=g.plan.periods[pi][s.key];
+    info.forEach(function(x){
+      var pid=g.plan.segments[x.gi].slots[s.key];
       row+= (pid? shortName(byId(pid)) : '—').padEnd(14);
-    }
+    });
     lines.push(row);
   });
   lines.push('');
@@ -1190,8 +1305,18 @@ function wire(){
   document.getElementById('generateBtn').onclick=doGenerate;
   document.getElementById('allInBtn').onclick=function(){ var g=ensureGame(); state.players.forEach(function(p){g.availability[p.id]=true;}); save(); renderAvailability(); };
   document.getElementById('allOutBtn').onclick=function(){ var g=ensureGame(); state.players.forEach(function(p){g.availability[p.id]=false;}); save(); renderAvailability(); };
-  ['gameName','gamePeriods','gameMinutes'].forEach(function(idn){
-    document.getElementById(idn).onchange=function(){ ensureGame(); renderSavedGames(); updateGameLabel(); };
+  ['gameName','gamePeriods','gameMinutes','gameSubInterval'].forEach(function(idn){
+    document.getElementById(idn).onchange=function(){ ensureGame(); renderGameTotals(); renderSavedGames(); updateGameLabel(); };
+    document.getElementById(idn).oninput=function(){ renderGameTotals(); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-preset]'), function(btn){
+    btn.onclick=function(){
+      var p=btn.getAttribute('data-preset').split(',');
+      document.getElementById('gamePeriods').value=p[0];
+      document.getElementById('gameMinutes').value=p[1];
+      document.getElementById('gameSubInterval').value=p[2];
+      ensureGame(); renderGameTotals(); renderSavedGames(); updateGameLabel();
+    };
   });
 
   document.getElementById('regenBtn').onclick=function(){ var g=currentGame(); if(!g){toast('No game');return;} if(g.locked){toast('Unlock first');return;} pushUndo(); g.plan=generatePlan(g); save(); renderPlan(); toast('Regenerated'); };
@@ -1221,6 +1346,7 @@ document.addEventListener('DOMContentLoaded', boot);
 window.__LM__ = {
   get state(){return state;},
   generatePlan:generatePlan, computeStats:computeStats, computeFlags:computeFlags,
+  buildSegments:buildSegments, buildGkSchedule:buildGkSchedule,
   SLOTS:SLOTS, byId:byId
 };
 </script>
