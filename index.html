@@ -98,6 +98,24 @@
   .sumtable td.nm{text-align:left;font-weight:700;white-space:nowrap}
   .bar{height:8px;background:#e7efe9;border-radius:5px;overflow:hidden}
   .bar>span{display:block;height:100%;background:var(--accent)}
+  .bar>span.hot{background:var(--bad)}
+  .sumtable td.hot{color:var(--bad);font-weight:800}
+  /* player-trace timeline */
+  .pc-head{font-size:12.5px;line-height:1.45}
+  .pc-timeline{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;padding-top:6px;align-items:stretch}
+  .pc-chip{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:54px;padding:6px 9px;border-radius:10px;font-size:12px;font-weight:700;border:1.5px solid transparent;position:relative}
+  .pc-chip.on{background:#e7f6ee;border-color:var(--accent);color:var(--accent-d)}
+  .pc-chip.bench{background:#eef1ef;border:1.5px dashed #b9c3bd;color:var(--muted)}
+  .pc-chip.cont{opacity:.7}
+  .pc-lab{font-size:13px;line-height:1.1}
+  .pc-cont{font-size:15px;color:var(--accent-d);line-height:1}
+  .pc-move{color:#2b7fb8;font-weight:800;margin-right:1px}
+  .pc-time{font-weight:600;color:var(--muted);margin-top:3px;font-size:10px}
+  .pc-tag{position:absolute;top:-8px;right:-5px;font-size:9px;font-weight:800;padding:1px 5px;border-radius:7px;color:#fff}
+  .pc-tag.on{background:var(--accent)} .pc-tag.off{background:var(--bad)}
+  .pc-dot{width:8px;height:8px;border-radius:50%;margin-bottom:3px}
+  .pc-dot.on{background:var(--accent)} .pc-dot.off{background:var(--bad)}
+  .pc-div{align-self:center;font-size:10px;font-weight:800;color:var(--muted);border-left:2px solid var(--line);padding-left:7px;margin-left:1px}
   /* Live */
   .clock{font-variant-numeric:tabular-nums;font-weight:800;font-size:clamp(64px,18vw,150px);text-align:center;line-height:1;letter-spacing:2px}
   .clock.warn{color:var(--warn)} .clock.done{color:var(--bad)}
@@ -274,7 +292,7 @@
       </div>
       <div id="pitchWindows" class="chips" style="margin-top:8px"></div>
       <div id="planPitch" style="margin-top:10px"></div>
-      <div class="pitchlegend"><span><b style="color:#2b7fb8">→</b> moves position</span><span><b style="color:var(--bad)">●</b> coming off</span><span><b style="color:var(--accent-d)">●</b> coming on</span><span>Tap a player to trace their windows.</span></div>
+      <div class="pitchlegend"><span><b style="color:var(--accent-d)">▮</b> on field</span><span><b style="color:#8a978f">▯</b> bench</span><span><b style="color:var(--accent)">ON</b>/<b style="color:var(--bad)">OFF</b> comes on / off</span><span><b style="color:#2b7fb8">→</b> changes position</span><span><b>〃</b> same as prior</span><span>Tap a player to trace their windows.</span></div>
     </div>
     <div class="panel">
       <h2>Minutes summary</h2>
@@ -985,18 +1003,21 @@ function renderPlanSummary(g, stat){
   var arr=Object.keys(stat).map(function(k){return stat[k];});
   arr.sort(function(a,b){ return b.min-a.min || byId(a.id).name.localeCompare(byId(b.id).name); });
   var maxMin=Math.max.apply(null, arr.map(function(a){return a.min;}).concat([1]));
+  var totalGame=(g.periods||0)*(g.minutes||0);
+  var redThresh=totalGame*0.75; // >=75% of total game minutes = on the field too much
   var tbl=el('table','sumtable');
   var head=el('tr'); ['Player','Total','Field','GK','Win','Bench',''].forEach(function(h){ head.appendChild(el('th','',h)); });
   tbl.appendChild(head);
   arr.forEach(function(s){
+    var hot = totalGame>0 && s.min>=redThresh;
     var tr=el('tr');
     tr.appendChild(el('td','nm', shortName(byId(s.id))));
-    tr.appendChild(el('td','',s.min+"'"));
+    var tot=el('td', hot?'hot':'', s.min+"'"); if(hot) tot.title='≥75% of the '+totalGame+"' game"; tr.appendChild(tot);
     tr.appendChild(el('td','',s.field+"'"));
     tr.appendChild(el('td','',s.gk?(s.gk+"'"):'—'));
     tr.appendChild(el('td','',String(s.stints)));
     tr.appendChild(el('td','',String(s.bench)));
-    var bt=el('td',''); var bar=el('div','bar'); var sp=el('span'); sp.style.width=Math.round(s.min/maxMin*100)+'%'; bar.appendChild(sp); bt.appendChild(bar); tr.appendChild(bt);
+    var bt=el('td',''); var bar=el('div','bar'); var sp=el('span'); if(hot) sp.className='hot'; sp.style.width=Math.round(s.min/maxMin*100)+'%'; bar.appendChild(sp); bt.appendChild(bar); tr.appendChild(bt);
     tbl.appendChild(tr);
   });
   host.innerHTML=''; host.appendChild(tbl);
@@ -1119,20 +1140,62 @@ function buildPitch(g, gi, opts){
   }
   return wrap;
 }
-// caption tracing a highlighted player's slot across every window
+// caption tracing a highlighted player's slot across every window — scannable timeline
 function playerPathCaption(g, hlId){
   if(!hlId) return null;
+  var pl=byId(hlId); if(!pl) return null;
   var info=segInfo(g.plan);
-  var parts=[];
-  info.forEach(function(x){
+  var win=info.map(function(x){
     var seg=g.plan.segments[x.gi]; var slotKey=null;
     for(var k in seg.slots){ if(seg.slots[k]===hlId){ slotKey=k; break; } }
-    var lab = slotKey? SLOT_BY_KEY[slotKey].label : 'Bench';
-    parts.push(periodName(g,x.period)+' '+x.startMin+"'–"+x.endMin+"': "+lab);
+    var sl = slotKey? SLOT_BY_KEY[slotKey] : null;
+    return { period:x.period, startMin:x.startMin, endMin:x.endMin, dur:x.dur,
+             on: !!slotKey, label: slotKey? ((sl&&sl.label)||slotKey) : null,
+             pos: slotKey? ((sl&&sl.pos)||slotKey) : null };
   });
+  var totalWin=win.length;
+  var onWins=win.filter(function(w){return w.on;});
+  var totalMin=onWins.reduce(function(a,w){return a+w.dur;},0);
+  // distinct base positions in the order they are played (for the headline)
+  var seq=[]; onWins.forEach(function(w){ if(!seq.length||seq[seq.length-1]!==w.pos) seq.push(w.pos); });
+  var posStr= seq.length? seq.join('→') : 'Bench';
+  var foot = pl.foot? (' ('+pl.foot+')') : '';
+  var benchWins=win.filter(function(w){return !w.on;});
+  var benchTxt = benchWins.length
+    ? ('benched '+benchWins.map(function(w){return periodName(g,w.period)+' '+w.startMin+'–'+w.endMin+"'";}).join('; '))
+    : 'full game';
+
   var cap=el('div','pathcap');
-  cap.appendChild(el('b',null, shortName(byId(hlId))+' — '));
-  cap.appendChild(document.createTextNode(parts.join('  ·  ')));
+  var head=el('div','pc-head');
+  head.appendChild(el('b',null, shortName(pl)));
+  head.appendChild(document.createTextNode(' — '+posStr+foot+' · '+totalMin+"' ("+onWins.length+' of '+totalWin+' windows) · '+benchTxt+'.'));
+  cap.appendChild(head);
+
+  var tl=el('div','pc-timeline');
+  win.forEach(function(w, i){
+    var prev = i>0? win[i-1] : null;
+    if(prev && w.period!==prev.period){ tl.appendChild(el('div','pc-div', periodName(g,w.period))); }
+    var chip=el('div','pc-chip '+(w.on?'on':'bench'));
+    if(w.on){
+      var cameOn = prev && !prev.on;                       // returned from bench
+      var changed = prev && prev.on && prev.label!==w.label; // moved position on field
+      var cont = prev && prev.on && prev.label===w.label;    // same position continuing
+      if(cameOn) chip.appendChild(el('span','pc-dot on'));
+      if(changed) chip.appendChild(el('span','pc-move','→'));
+      if(cont){ chip.classList.add('cont'); chip.appendChild(el('span','pc-cont','〃')); }
+      else chip.appendChild(el('span','pc-lab', w.label));
+      if(cameOn) chip.appendChild(el('span','pc-tag on','ON'));
+    } else {
+      var cameOff = prev && prev.on;
+      if(cameOff) chip.appendChild(el('span','pc-dot off'));
+      chip.appendChild(el('span','pc-lab','Bench'));
+      if(cameOff) chip.appendChild(el('span','pc-tag off','OFF'));
+    }
+    chip.appendChild(el('small','pc-time', w.startMin+'–'+w.endMin+"'"));
+    chip.title = periodName(g,w.period)+' '+w.startMin+'–'+w.endMin+"' · "+(w.on? w.label : 'Bench');
+    tl.appendChild(chip);
+  });
+  cap.appendChild(tl);
   return cap;
 }
 
@@ -1882,6 +1945,7 @@ window.__LM__ = {
   generatePlan:generatePlan, computeStats:computeStats, computeFlags:computeFlags,
   buildSegments:buildSegments, buildGkSchedule:buildGkSchedule,
   segTransition:segTransition, slotEligRank:slotEligRank, PITCH:PITCH,
+  segInfo:segInfo, playerPathCaption:playerPathCaption, renderPlanPitch:renderPlanPitch,
   SLOTS:SLOTS, byId:byId,
   encodePayload:encodePayload, decodePayload:decodePayload,
   makeGamePayload:makeGamePayload, makeRosterPayload:makeRosterPayload, makeFullPayload:makeFullPayload,
