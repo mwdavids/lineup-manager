@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Lineup" />
+<meta name="theme-color" content="#0b3d2e" />
+<title>Lineup Manager — U13 4-3-3</title>
+<style>
+  :root{
+    --bg:#0b3d2e; --bg2:#0f5138; --panel:#ffffff; --ink:#12211b; --muted:#5b6b63;
+    --line:#d9e2dc; --accent:#159c5b; --accent-d:#0d7a45; --warn:#c9781f; --bad:#c0392b;
+    --chip:#eef4f0; --sel:#ffe7a8; --sel-b:#e0a92a; --tap:56px;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); background:var(--bg); font-size:17px; line-height:1.35;
+    -webkit-text-size-adjust:100%; overscroll-behavior:none;
+  }
+  header{
+    background:linear-gradient(160deg,var(--bg),var(--bg2)); color:#eafff4;
+    padding:10px 14px calc(10px + var(--safe-t,0px)); display:flex; align-items:center; gap:10px;
+    position:sticky; top:0; z-index:20;
+  }
+  header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.2px;flex:1;}
+  header .sub{font-size:12px;opacity:.8;font-weight:400}
+  #app{max-width:1100px;margin:0 auto;padding:10px 10px 90px;}
+  .tabbar{
+    position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;
+    background:#0a2f24;border-top:1px solid #063; padding-bottom:var(--safe-b);
+  }
+  .tabbar button{
+    flex:1;background:none;border:none;color:#bfe6d3;font-size:12px;font-weight:600;
+    padding:8px 2px calc(8px); min-height:calc(var(--tap) + 4px); display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:3px;cursor:pointer;
+  }
+  .tabbar button .ic{font-size:20px;line-height:1}
+  .tabbar button.active{color:#fff;background:#0f5138}
+  .panel{background:var(--panel);border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+  .panel h2{margin:0 0 10px;font-size:16px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grow{flex:1}
+  label.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+  input,select,textarea{
+    font:inherit;padding:12px;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);
+    min-height:var(--tap);
+  }
+  input[type=checkbox]{min-height:auto;width:26px;height:26px}
+  textarea{min-height:100px;resize:vertical}
+  button.btn{
+    font:inherit;font-weight:700;border:none;border-radius:12px;padding:0 16px;min-height:var(--tap);
+    background:var(--accent);color:#fff;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  }
+  button.btn:active{transform:translateY(1px)}
+  button.btn.sec{background:var(--chip);color:var(--ink);border:1.5px solid var(--line)}
+  button.btn.warn{background:var(--warn)}
+  button.btn.bad{background:var(--bad)}
+  button.btn.sm{min-height:44px;padding:0 12px;font-size:14px}
+  button.btn.ghost{background:transparent;color:var(--accent-d);border:1.5px solid var(--accent)}
+  .muted{color:var(--muted)}
+  .pill{display:inline-block;background:var(--chip);border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700}
+  .pill.L{background:#e7f0ff;color:#1c4e9c}
+  .pill.R{background:#fdeee2;color:#9c561c}
+  .flags{display:inline-flex;gap:3px;flex-wrap:wrap}
+  .fl{font-size:10px;font-weight:800;border-radius:5px;padding:1px 4px;line-height:1.3}
+  .fl.pos{background:#fff2cf;color:#8a5a00}
+  .fl.foot{background:#e7e2ff;color:#4b32a8}
+  .fl.gk{background:#ffe0e0;color:#a01919}
+  .fl.move{background:#dbeffb;color:#155e8a}
+  table{border-collapse:collapse;width:100%}
+  .listrow{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line)}
+  .listrow:last-child{border-bottom:none}
+  .listrow .nm{font-weight:700;flex:1;min-width:120px}
+  .avatar{width:38px;height:38px;border-radius:50%;background:var(--bg2);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex:0 0 auto}
+  .gamehdr{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  .availgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  .availcell{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:10px;padding:8px;min-height:var(--tap)}
+  .availcell.off{opacity:.5;background:#f6f6f6}
+  .availcell .nm{flex:1;font-weight:600;font-size:14px}
+  .plan-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table.plan{min-width:520px}
+  table.plan th,table.plan td{border:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+  table.plan th{background:var(--chip);font-size:12px;position:sticky;left:0}
+  table.plan thead th{position:sticky;top:0;z-index:2}
+  table.plan td .cell{display:flex;flex-direction:column;gap:3px;min-height:40px;cursor:pointer;border-radius:6px;padding:2px}
+  table.plan td .cell .who{font-weight:700;font-size:13px}
+  table.plan td .cell.empty .who{color:var(--bad)}
+  table.plan td.sel .cell{background:var(--sel);outline:2px solid var(--sel-b)}
+  .slotlab{font-weight:800;font-size:12px;white-space:nowrap}
+  .sumtable td,.sumtable th{border:1px solid var(--line);padding:6px;font-size:13px;text-align:center}
+  .sumtable th{background:var(--chip)}
+  .sumtable td.nm{text-align:left;font-weight:700;white-space:nowrap}
+  .bar{height:8px;background:#e7efe9;border-radius:5px;overflow:hidden}
+  .bar>span{display:block;height:100%;background:var(--accent)}
+  /* Live */
+  .clock{font-variant-numeric:tabular-nums;font-weight:800;font-size:clamp(64px,18vw,150px);text-align:center;line-height:1;letter-spacing:2px}
+  .clock.warn{color:var(--warn)} .clock.done{color:var(--bad)}
+  .subcard{border:3px solid var(--warn);border-radius:16px;padding:14px;background:#fff7ec;margin-bottom:12px;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(201,120,31,.4)}50%{box-shadow:0 0 0 10px rgba(201,120,31,0)}}
+  .subrow{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;padding:6px 0;border-bottom:1px dashed var(--line);flex-wrap:wrap}
+  .subrow:last-child{border-bottom:none}
+  .off{color:var(--bad)} .on{color:var(--accent-d)}
+  .livemin{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px}
+  .livemin .m{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:13px;display:flex;justify-content:space-between;gap:6px}
+  /* overlay */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:none;align-items:flex-end;justify-content:center}
+  .overlay.show{display:flex}
+  .sheet{background:#fff;width:100%;max-width:560px;border-radius:16px 16px 0 0;padding:16px;max-height:85vh;overflow:auto}
+  @media (min-width:700px){ .overlay{align-items:center} .sheet{border-radius:16px} }
+  .sheet h3{margin:0 0 10px}
+  .choice{display:flex;align-items:center;gap:10px;padding:10px;border:1.5px solid var(--line);border-radius:10px;margin-bottom:8px;min-height:var(--tap);cursor:pointer}
+  .choice:active{background:var(--chip)}
+  .poswrap{display:flex;gap:6px;flex-wrap:wrap}
+  .hidden{display:none!important}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(80px + var(--safe-b));background:#111;color:#fff;padding:10px 16px;border-radius:10px;z-index:60;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
+  .toast.show{opacity:.95}
+  .seg{display:flex;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{flex:1;border:none;background:#fff;padding:10px;font-weight:700;min-height:var(--tap);cursor:pointer}
+  .seg button.on{background:var(--accent);color:#fff}
+  .small{font-size:12px}
+  .center{text-align:center}
+  @media print{
+    header,.tabbar,.noprint{display:none!important}
+    body{background:#fff;color:#000;font-size:12px}
+    #app{padding:0}
+    .panel{box-shadow:none;border:1px solid #999;border-radius:0}
+    table.plan th,table.plan td{border:1px solid #444}
+    .cell{cursor:default!important}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Lineup Manager</h1>
+    <div class="sub" id="gameLabel">4-3-3 · U13</div>
+  </div>
+  <button class="btn sm sec noprint" id="undoBtn" title="Undo">↶ Undo</button>
+</header>
+
+<div id="app">
+  <!-- ROSTER -->
+  <section id="tab-roster" class="tabview">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">Roster <span class="muted small" id="rosterCount"></span></h2>
+        <button class="btn sm" id="addPlayerBtn">＋ Add player</button>
+      </div>
+    </div>
+    <div class="panel" id="rosterList"></div>
+  </section>
+
+  <!-- SETUP -->
+  <section id="tab-setup" class="tabview hidden">
+    <div class="panel">
+      <h2>Game day</h2>
+      <div class="row">
+        <label class="fld grow">Name
+          <input id="gameName" placeholder="e.g. vs Rockets — Sat AM" />
+        </label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label class="fld">Periods
+          <input id="gamePeriods" type="number" min="1" max="12" value="4" inputmode="numeric" />
+        </label>
+        <label class="fld">Minutes / period
+          <input id="gameMinutes" type="number" min="1" max="45" value="12" inputmode="numeric" />
+        </label>
+        <div class="grow"></div>
+        <button class="btn sec sm" id="newGameBtn" style="align-self:flex-end">New blank game</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">Availability <span class="muted small" id="availCount"></span></h2>
+        <div class="row">
+          <button class="btn sec sm" id="allInBtn">All in</button>
+          <button class="btn sec sm" id="allOutBtn">All out</button>
+        </div>
+      </div>
+      <div class="availgrid" id="availGrid" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn grow" id="generateBtn">⚙️ Generate Plan</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Saved games</h2>
+      <div id="savedGames"></div>
+    </div>
+  </section>
+
+  <!-- PLAN -->
+  <section id="tab-plan" class="tabview hidden">
+    <div class="panel">
+      <div class="gamehdr">
+        <h2 style="margin:0" id="planTitle">Plan</h2>
+        <span class="pill" id="lockPill" style="display:none">🔒 Locked</span>
+        <div class="grow"></div>
+        <button class="btn sec sm" id="regenBtn">Regenerate</button>
+        <button class="btn sm" id="lockBtn">Lock plan</button>
+      </div>
+      <div class="muted small" id="planMeta"></div>
+    </div>
+    <div class="panel">
+      <div class="plan-wrap"><div id="planGrid"></div></div>
+      <div class="muted small" style="margin-top:8px">Tap a slot to substitute or swap. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field.</div>
+    </div>
+    <div class="panel">
+      <h2>Minutes summary</h2>
+      <div id="planSummary"></div>
+    </div>
+    <div class="panel noprint">
+      <div class="row">
+        <button class="btn sec sm" id="exportBtn">📋 Export text</button>
+        <button class="btn sec sm" id="printBtn">🖨️ Print view</button>
+        <button class="btn sec sm" id="dupBtn">⧉ Duplicate game</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- LIVE -->
+  <section id="tab-live" class="tabview hidden">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">Live — <span id="liveGame"></span></h2>
+        <span class="pill" id="livePeriodPill">Period 1</span>
+      </div>
+      <div class="clock" id="clock">00:00</div>
+      <div class="row" style="justify-content:center;margin-top:6px">
+        <button class="btn" id="startBtn">▶ Start</button>
+        <button class="btn sec" id="pauseBtn">⏸ Pause</button>
+        <button class="btn sec" id="resetBtn">↺ Reset</button>
+        <button class="btn" id="nextBtn">⏭ Next period</button>
+      </div>
+    </div>
+
+    <div id="subCardWrap"></div>
+
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">On field now</h2>
+        <button class="btn bad sm" id="markOutBtn">＋ Mark player OUT</button>
+      </div>
+      <div id="liveField" style="margin-top:8px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Running minutes</h2>
+      <div class="livemin" id="liveMinutes"></div>
+    </div>
+  </section>
+</div>
+
+<div class="tabbar noprint">
+  <button data-tab="roster" class="active"><span class="ic">👥</span>Roster</button>
+  <button data-tab="setup"><span class="ic">⚙️</span>Setup</button>
+  <button data-tab="plan"><span class="ic">📋</span>Plan</button>
+  <button data-tab="live"><span class="ic">⏱️</span>Live</button>
+</div>
+
+<div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   Lineup Manager — single-file offline app (U13 4-3-3)
+   ============================================================ */
+
+/* ---------- Constants ---------- */
+var POSITIONS = ['GK','RB','CB','LB','DM','CM','RW','ST','LW'];
+var SLOTS = [
+  {key:'GK', pos:'GK', label:'GK',     side:'C'},
+  {key:'RB', pos:'RB', label:'RB',     side:'R'},
+  {key:'CBR',pos:'CB', label:'CB (R)', side:'C'},
+  {key:'CBL',pos:'CB', label:'CB (L)', side:'L'},
+  {key:'LB', pos:'LB', label:'LB',     side:'L'},
+  {key:'DM', pos:'DM', label:'DM',     side:'C'},
+  {key:'CMR',pos:'CM', label:'CM (R)', side:'C'},
+  {key:'CML',pos:'CM', label:'CM (L)', side:'C'},
+  {key:'RW', pos:'RW', label:'RW',     side:'R'},
+  {key:'ST', pos:'ST', label:'ST',     side:'C'},
+  {key:'LW', pos:'LW', label:'LW',     side:'L'}
+];
+var OUTFIELD_SLOTS = SLOTS.filter(function(s){return s.key!=='GK';});
+var SLOT_BY_KEY = {}; SLOTS.forEach(function(s){SLOT_BY_KEY[s.key]=s;});
+var BIG = 1e7;
+var WARN_SECONDS = 60; // sub warning before period end
+
+/* ---------- Seed roster ---------- */
+var SEED = [
+  ['Eleanor C.','R',['GK','RW']],
+  ['Nora D.','R',['RB','CM']],
+  ['Mackenzie D.','R',['CM','CB']],
+  ['Teigan E.','R',['CB','RB']],
+  ['Finley G.','R',['ST','CB']],
+  ['Caroline G.','R',['RW']],
+  ['Haley H.','R',['CB']],
+  ['Isla K.','L',['CB','LB']],
+  ['Ava L.','R',['RB']],
+  ['Violet M.','R',['DM']],
+  ['Emily M.','R',['CM','CB']],
+  ['Penelope T.','L',['LW']],
+  ['Ayana B.','L',['LW','CM','LB']],
+  ['Genevieve E.','R',['RB','LB']],
+  ['Sophia F.','R',['CM','ST']],
+  ['Violet F.','R',['RB']],
+  ['Isobel M.','R',['ST','GK']],
+  ['Ryann M.','L',['LB']],
+  ['Eliza M.','R',['ST','RW']]
+];
+
+/* ---------- State ---------- */
+var state = { players:[], games:[], currentGameId:null };
+var ui = { tab:'roster', selCell:null, editPlayerId:null };
+var undoStack = [];
+
+/* ---------- Storage ---------- */
+var LS_KEY = 'lineupManager.v1';
+function uid(p){ return (p||'id')+Math.random().toString(36).slice(2,9); }
+function save(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+  catch(e){ toast('Save failed: storage full?'); }
+}
+function load(){
+  var raw=null;
+  try{ raw=localStorage.getItem(LS_KEY); }catch(e){}
+  if(raw){
+    try{ state=JSON.parse(raw); }catch(e){ raw=null; }
+  }
+  if(!raw || !state.players || !state.players.length){
+    state = { players:[], games:[], currentGameId:null };
+    SEED.forEach(function(s){
+      state.players.push({ id:uid('p'), name:s[0], foot:s[1], positions:s[2].slice() });
+    });
+    save();
+  }
+  if(!state.games) state.games=[];
+}
+
+/* ---------- Helpers ---------- */
+function byId(id){ for(var i=0;i<state.players.length;i++) if(state.players[i].id===id) return state.players[i]; return null; }
+function initials(name){
+  var parts=name.replace(/\./g,'').trim().split(/\s+/);
+  if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
+  return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
+}
+function currentGame(){ for(var i=0;i<state.games.length;i++) if(state.games[i].id===state.currentGameId) return state.games[i]; return null; }
+function toast(msg){
+  var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t=setTimeout(function(){t.classList.remove('show');},1800);
+}
+function pushUndo(){
+  var g=currentGame(); if(!g) return;
+  undoStack.push(JSON.stringify(g.plan||null));
+  if(undoStack.length>40) undoStack.shift();
+}
+function doUndo(){
+  var g=currentGame();
+  if(!g || !undoStack.length){ toast('Nothing to undo'); return; }
+  var snap=undoStack.pop();
+  g.plan = snap==='null'? null : JSON.parse(snap);
+  save(); renderPlan(); renderLive(); toast('Undone');
+}
+
+/* ---------- Eligibility / cost ---------- */
+function eligRank(player, pos){ // 0 primary,1,2 ; -1 not eligible
+  return player.positions.indexOf(pos);
+}
+function footMismatch(player, slot){
+  if(slot.side==='R' && player.foot==='L') return true;
+  if(slot.side==='L' && player.foot==='R') return true;
+  return false;
+}
+
+/* ============================================================
+   AUTO-PLANNER
+   ============================================================ */
+/* Hungarian algorithm (min-cost assignment), rows n <= cols m, 1-indexed cost. */
+function hungarian(cost, n, m){
+  var INF=Infinity;
+  var u=new Array(n+1).fill(0), v=new Array(m+1).fill(0);
+  var p=new Array(m+1).fill(0), way=new Array(m+1).fill(0);
+  for(var i=1;i<=n;i++){
+    p[0]=i; var j0=0;
+    var minv=new Array(m+1).fill(INF);
+    var used=new Array(m+1).fill(false);
+    do{
+      used[j0]=true; var i0=p[j0], delta=INF, j1=-1;
+      for(var j=1;j<=m;j++) if(!used[j]){
+        var cur=cost[i0][j]-u[i0]-v[j];
+        if(cur<minv[j]){ minv[j]=cur; way[j]=j0; }
+        if(minv[j]<delta){ delta=minv[j]; j1=j; }
+      }
+      for(var j2=0;j2<=m;j2++){
+        if(used[j2]){ u[p[j2]]+=delta; v[j2]-=delta; }
+        else minv[j2]-=delta;
+      }
+      j0=j1;
+    } while(p[j0]!==0);
+    do{ var j1b=way[j0]; p[j0]=p[j1b]; j0=j1b; } while(j0);
+  }
+  var rowToCol=new Array(n+1).fill(-1);
+  for(var jj=1;jj<=m;jj++) if(p[jj]>0) rowToCol[p[jj]]=jj;
+  return rowToCol;
+}
+
+/* Build GK schedule across periods to approximate a 50/50 split. */
+function buildGkSchedule(availPlayers, P){
+  var keepers = availPlayers.filter(function(pl){ return pl.positions.indexOf('GK')>=0; });
+  // sort: primary GK first, then by name for determinism
+  keepers.sort(function(a,b){
+    var ra=a.positions.indexOf('GK'), rb=b.positions.indexOf('GK');
+    if(ra!==rb) return ra-rb;
+    return a.name.localeCompare(b.name);
+  });
+  var sched=[];
+  for(var p=0;p<P;p++){
+    sched.push(keepers.length? keepers[p % keepers.length].id : null);
+  }
+  return sched;
+}
+
+/*
+  Generate a full plan.
+  opts: { fromPeriod, fixedPeriods, startMinutes, startGkMin }
+  - fromPeriod: first period index to (re)plan (default 0)
+  - fixedPeriods: array of already-decided period assignments to keep [0..fromPeriod-1]
+  - startMinutes/startGkMin: accumulated minutes going into fromPeriod
+*/
+function generatePlan(game, opts){
+  opts = opts||{};
+  var P=game.periods, M=game.minutes;
+  var fromPeriod = opts.fromPeriod||0;
+  var avail = state.players.filter(function(pl){ return game.availability[pl.id]!==false; });
+
+  // Track field and GK minutes separately. GK minutes count less toward the
+  // "who should sit" fairness decision so keepers still get outfield time.
+  var GK_FAIR = 0.5;
+  var fldMin={}, gkMin={};
+  state.players.forEach(function(pl){ fldMin[pl.id]=0; gkMin[pl.id]=0; });
+  if(opts.startGkMin){ for(var k2 in opts.startGkMin) gkMin[k2]=opts.startGkMin[k2]||0; }
+  if(opts.startMinutes){ for(var k in opts.startMinutes) fldMin[k]=(opts.startMinutes[k]||0)-(gkMin[k]||0); }
+  function loadOf(id){ return (fldMin[id]||0)*10 + (gkMin[id]||0)*10*GK_FAIR; }
+
+  var periods=[];
+  var gkSched = buildGkSchedule(avail, P);
+
+  // keep fixed periods
+  for(var fp=0; fp<fromPeriod; fp++){
+    periods[fp] = opts.fixedPeriods ? opts.fixedPeriods[fp] : {};
+  }
+
+  var prev = fromPeriod>0 ? periods[fromPeriod-1] : null;
+
+  for(var pi=fromPeriod; pi<P; pi++){
+    var gkId = gkSched[pi];
+    // if scheduled keeper is out (unavailable), pick another available keeper
+    if(gkId && game.availability[byId(gkId)? gkId : '']===false) gkId=null;
+    if(!gkId){
+      var kp = avail.filter(function(pl){ return pl.positions.indexOf('GK')>=0; });
+      gkId = kp.length? kp[pi % kp.length].id : null;
+    }
+
+    var candidates = avail.filter(function(pl){ return pl.id!==gkId; });
+    var n = OUTFIELD_SLOTS.length;       // 10
+    var m = candidates.length;
+    var assign = {};
+
+    if(m>=n){
+      // cost matrix 1-indexed [1..n][1..m]
+      var cost=[]; for(var r=0;r<=n;r++) cost.push(new Array(m+1).fill(0));
+      for(var ri=1;ri<=n;ri++){
+        var slot=OUTFIELD_SLOTS[ri-1];
+        for(var ci=1;ci<=m;ci++){
+          var pl=candidates[ci-1];
+          cost[ri][ci]=cellCost(pl, slot, pi, loadOf, prev, ci);
+        }
+      }
+      var r2c = hungarian(cost, n, m);
+      for(var ri2=1;ri2<=n;ri2++){
+        var col=r2c[ri2];
+        var slotKey=OUTFIELD_SLOTS[ri2-1].key;
+        if(col>0 && cost[ri2][col]<BIG){
+          assign[slotKey]=candidates[col-1].id;
+        } else {
+          assign[slotKey]=null; // no eligible player
+        }
+      }
+    } else {
+      // fewer candidates than slots: fill greedily, leave rest empty
+      var pool=candidates.slice();
+      OUTFIELD_SLOTS.forEach(function(slot){
+        var best=-1,bestc=BIG;
+        for(var q=0;q<pool.length;q++){
+          var c=cellCost(pool[q],slot,pi,loadOf,prev,q+1);
+          if(c<bestc){bestc=c;best=q;}
+        }
+        if(best>=0 && bestc<BIG){ assign[slot.key]=pool[best].id; pool.splice(best,1);} 
+        else assign[slot.key]=null;
+      });
+    }
+
+    assign['GK']=gkId;
+
+    // accrue minutes
+    SLOTS.forEach(function(s){
+      var pid=assign[s.key];
+      if(pid){ if(s.key==='GK') gkMin[pid]+=M; else fldMin[pid]+=M; }
+    });
+
+    periods[pi]=assign;
+    prev=assign;
+  }
+
+  return { periods:periods, generatedAt:Date.now() };
+}
+
+function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex){
+  var rank = eligRank(pl, slot.pos);
+  if(rank<0) return BIG;
+  var c = 0;
+  c += rank*30;                         // prefer primary>secondary>tertiary
+  c += loadOf(pl.id);                   // fairness: equalize minutes (field weighted; GK discounted)
+  if(footMismatch(pl, slot)) c += 15;   // footedness (soft)
+  // stability
+  if(prev){
+    var prevSlotKey=null;
+    for(var k in prev){ if(prev[k]===pl.id){ prevSlotKey=k; break; } }
+    if(prevSlotKey){
+      if(prevSlotKey===slot.key) c -= 5;              // stayed same position: good
+      else if(prevSlotKey!=='GK') c += 8;             // moved on field without rest
+    }
+  }
+  c += (colIndex||0)*0.001;             // deterministic tie-break
+  return c;
+}
+
+/* ---------- Stats & flags from a plan ---------- */
+function computeStats(game){
+  var plan=game.plan; var M=game.minutes;
+  var stat={};
+  state.players.forEach(function(pl){
+    if(game.availability[pl.id]!==false)
+      stat[pl.id]={id:pl.id, min:0, gk:0, field:0, periods:0, bench:0};
+  });
+  if(!plan) return stat;
+  var P=plan.periods.length;
+  for(var pi=0;pi<P;pi++){
+    var ap=plan.periods[pi]; var onField={};
+    SLOTS.forEach(function(s){
+      var pid=ap[s.key]; if(!pid||!stat[pid]) return;
+      onField[pid]=true;
+      stat[pid].min+=M; stat[pid].periods++;
+      if(s.key==='GK') stat[pid].gk+=M; else stat[pid].field+=M;
+    });
+    for(var id in stat){ if(!onField[id]) stat[id].bench++; }
+  }
+  return stat;
+}
+
+function computeFlags(game){
+  var plan=game.plan; if(!plan) return {};
+  var flags={}; var P=plan.periods.length;
+  var stat=computeStats(game);
+  for(var pi=0;pi<P;pi++){
+    var ap=plan.periods[pi];
+    SLOTS.forEach(function(s){
+      var pid=ap[s.key]; if(!pid) return;
+      var pl=byId(pid); if(!pl) return;
+      var f=[];
+      var rank=eligRank(pl,s.pos);
+      if(rank===1) f.push({t:'2',cls:'pos',title:'Secondary position'});
+      else if(rank===2) f.push({t:'3',cls:'pos',title:'Tertiary position'});
+      else if(rank<0) f.push({t:'✖',cls:'gk',title:'Not a listed position'});
+      if(footMismatch(pl,s)) f.push({t:'FT',cls:'foot',title:'Wrong foot on flank'});
+      if(s.key==='GK'){
+        var st=stat[pid];
+        var gkPeriods = st? st.gk/game.minutes : 0;
+        if(st && st.field===0 && st.periods>0) f.push({t:'GK',cls:'gk',title:'Keeper-only — no outfield time'});
+        else if(gkPeriods > P/2) f.push({t:'GK',cls:'gk',title:'Keeps goal more than half the game'});
+      }
+      // moved on field (consecutive different outfield slot)
+      if(pi>0 && s.key!=='GK'){
+        var pp=plan.periods[pi-1]; var prevKey=null;
+        for(var k in pp){ if(pp[k]===pid){prevKey=k;break;} }
+        if(prevKey && prevKey!=='GK' && prevKey!==s.key) f.push({t:'↔',cls:'move',title:'Moved position without rest'});
+      }
+      if(f.length) flags[pi+'|'+s.key]=f;
+    });
+  }
+  return flags;
+}
+
+/* ============================================================
+   RENDERING
+   ============================================================ */
+function el(tag,cls,txt){ var e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; }
+
+/* ----- Roster ----- */
+function renderRoster(){
+  document.getElementById('rosterCount').textContent='('+state.players.length+')';
+  var host=document.getElementById('rosterList'); host.innerHTML='';
+  state.players.forEach(function(pl){
+    var row=el('div','listrow');
+    var av=el('div','avatar',initials(pl.name)); row.appendChild(av);
+    var nm=el('div','nm'); nm.appendChild(document.createTextNode(pl.name));
+    var pos=el('div','muted small'); pos.textContent=pl.positions.join(' · ');
+    nm.appendChild(pos); row.appendChild(nm);
+    var foot=el('span','pill '+pl.foot, pl.foot+' foot'); row.appendChild(foot);
+    var edit=el('button','btn sm sec','Edit'); edit.onclick=function(){ openPlayerSheet(pl.id); };
+    row.appendChild(edit);
+    host.appendChild(row);
+  });
+}
+
+function openPlayerSheet(id){
+  var editing = id!=null;
+  var pl = editing? byId(id) : {name:'',foot:'R',positions:[]};
+  var sheet=document.getElementById('sheet'); sheet.innerHTML='';
+  sheet.appendChild(el('h3',null, editing?'Edit player':'Add player'));
+
+  var nameL=el('label','fld','Name'); var nameI=el('input'); nameI.value=pl.name; nameI.placeholder='First L.'; nameL.appendChild(nameI); sheet.appendChild(nameL);
+
+  var footL=el('label','fld'); footL.appendChild(document.createTextNode('Preferred foot')); footL.style.marginTop='10px';
+  var seg=el('div','seg');
+  ['L','R'].forEach(function(fv){
+    var b=el('button',null, fv==='L'?'Left':'Right'); if(pl.foot===fv)b.classList.add('on');
+    b.onclick=function(){ pl._foot=fv; Array.prototype.forEach.call(seg.children,function(c){c.classList.remove('on');}); b.classList.add('on'); };
+    seg.appendChild(b);
+  });
+  pl._foot=pl.foot||'R';
+  footL.appendChild(seg); sheet.appendChild(footL);
+
+  sheet.appendChild(el('div','fld',null)).textContent='Positions (in priority order)';
+  var picks=[pl.positions[0]||'', pl.positions[1]||'', pl.positions[2]||''];
+  var labels=['Primary','Secondary','Tertiary'];
+  var selects=[];
+  for(var i=0;i<3;i++){
+    (function(i){
+      var l=el('label','fld small',labels[i]); l.style.marginTop='6px';
+      var sel=el('select');
+      var opt0=el('option', null, i===0?'— choose —':'— none —'); opt0.value=''; sel.appendChild(opt0);
+      POSITIONS.forEach(function(p){ var o=el('option',null,p); o.value=p; if(picks[i]===p)o.selected=true; sel.appendChild(o); });
+      l.appendChild(sel); sheet.appendChild(l); selects.push(sel);
+    })(i);
+  }
+
+  var btns=el('div','row'); btns.style.marginTop='14px';
+  var saveB=el('button','btn grow', editing?'Save':'Add');
+  saveB.onclick=function(){
+    var nm=nameI.value.trim(); if(!nm){ toast('Name required'); return; }
+    var poss=[]; selects.forEach(function(s){ if(s.value && poss.indexOf(s.value)<0) poss.push(s.value); });
+    if(!poss.length){ toast('Pick at least one position'); return; }
+    if(editing){ pl.name=nm; pl.foot=pl._foot; pl.positions=poss; delete pl._foot; }
+    else { state.players.push({id:uid('p'),name:nm,foot:pl._foot,positions:poss}); }
+    save(); closeSheet(); renderRoster(); renderAvailability(); toast('Saved');
+  };
+  btns.appendChild(saveB);
+  if(editing){
+    var delB=el('button','btn bad','Remove');
+    delB.onclick=function(){
+      if(!confirm('Remove '+pl.name+'?')) return;
+      state.players=state.players.filter(function(x){return x.id!==pl.id;});
+      state.games.forEach(function(g){ if(g.availability) delete g.availability[pl.id]; });
+      save(); closeSheet(); renderRoster(); renderAvailability(); toast('Removed');
+    };
+    btns.appendChild(delB);
+  }
+  var cancel=el('button','btn sec','Cancel'); cancel.onclick=closeSheet; btns.appendChild(cancel);
+  sheet.appendChild(btns);
+  openSheet();
+}
+
+/* ----- Setup ----- */
+function renderAvailability(){
+  var g=currentGame();
+  var grid=document.getElementById('availGrid'); grid.innerHTML='';
+  if(!g){ grid.innerHTML='<div class="muted">Create or select a game.</div>'; document.getElementById('availCount').textContent=''; return; }
+  var cnt=0;
+  state.players.forEach(function(pl){
+    var on = g.availability[pl.id]!==false;
+    if(on) cnt++;
+    var cell=el('div','availcell'+(on?'':' off'));
+    var av=el('div','avatar',initials(pl.name)); av.style.width='30px'; av.style.height='30px'; av.style.fontSize='12px';
+    cell.appendChild(av);
+    var nm=el('div','nm',pl.name); cell.appendChild(nm);
+    var cb=el('input'); cb.type='checkbox'; cb.checked=on;
+    cb.onchange=function(){ g.availability[pl.id]=cb.checked; save(); renderAvailability(); };
+    cell.appendChild(cb);
+    cell.onclick=function(e){ if(e.target!==cb){ cb.checked=!cb.checked; cb.onchange(); } };
+    grid.appendChild(cell);
+  });
+  document.getElementById('availCount').textContent='('+cnt+' available)';
+}
+
+function renderSavedGames(){
+  var host=document.getElementById('savedGames'); host.innerHTML='';
+  if(!state.games.length){ host.innerHTML='<div class="muted">No saved games yet.</div>'; return; }
+  state.games.slice().reverse().forEach(function(g){
+    var row=el('div','listrow');
+    var nm=el('div','nm'); nm.textContent=g.name||'(unnamed)';
+    var meta=el('div','muted small'); meta.textContent=g.periods+'×'+g.minutes+'min · '+(g.plan?'planned':'no plan')+(g.locked?' · 🔒':'');
+    nm.appendChild(meta); row.appendChild(nm);
+    if(g.id===state.currentGameId){ row.appendChild(el('span','pill','current')); }
+    var open=el('button','btn sm sec','Open'); open.onclick=function(){ state.currentGameId=g.id; save(); loadGameIntoSetup(); switchTab(g.plan?'plan':'setup'); };
+    row.appendChild(open);
+    var dup=el('button','btn sm sec','⧉'); dup.title='Duplicate'; dup.onclick=function(){ duplicateGame(g.id); };
+    row.appendChild(dup);
+    var del=el('button','btn sm bad','✕'); del.onclick=function(){
+      if(!confirm('Delete game "'+(g.name||'')+'"?')) return;
+      state.games=state.games.filter(function(x){return x.id!==g.id;});
+      if(state.currentGameId===g.id) state.currentGameId = state.games.length? state.games[state.games.length-1].id : null;
+      save(); loadGameIntoSetup(); renderAll();
+    };
+    row.appendChild(del);
+    host.appendChild(row);
+  });
+}
+
+function loadGameIntoSetup(){
+  var g=currentGame();
+  document.getElementById('gameName').value = g? (g.name||'') : '';
+  document.getElementById('gamePeriods').value = g? g.periods : 4;
+  document.getElementById('gameMinutes').value = g? g.minutes : 12;
+  updateGameLabel();
+  renderAvailability(); renderSavedGames();
+}
+function updateGameLabel(){
+  var g=currentGame();
+  document.getElementById('gameLabel').textContent = g? ('4-3-3 · '+(g.name||'Game')) : '4-3-3 · U13';
+}
+
+function ensureGame(){
+  var g=currentGame();
+  if(!g){
+    g=newGame();
+  }
+  g.name=document.getElementById('gameName').value.trim()||g.name||('Game '+new Date().toLocaleDateString());
+  g.periods=Math.max(1,Math.min(12, parseInt(document.getElementById('gamePeriods').value,10)||4));
+  g.minutes=Math.max(1,Math.min(45, parseInt(document.getElementById('gameMinutes').value,10)||12));
+  save();
+  return g;
+}
+function newGame(){
+  var avail={}; state.players.forEach(function(p){ avail[p.id]=true; });
+  var g={ id:uid('g'), name:'', date:Date.now(), periods:4, minutes:12, availability:avail, plan:null, locked:false, live:{period:0} };
+  state.games.push(g); state.currentGameId=g.id; save();
+  return g;
+}
+
+function duplicateGame(id){
+  var src=null; for(var i=0;i<state.games.length;i++) if(state.games[i].id===id) src=state.games[i];
+  if(!src) return;
+  var copy=JSON.parse(JSON.stringify(src));
+  copy.id=uid('g'); copy.name=(src.name||'Game')+' (copy)'; copy.date=Date.now(); copy.locked=false; copy.live={period:0};
+  state.games.push(copy); state.currentGameId=copy.id; save();
+  loadGameIntoSetup(); renderAll(); toast('Duplicated');
+  switchTab('setup');
+}
+
+/* ----- Plan ----- */
+function renderPlan(){
+  var g=currentGame();
+  var host=document.getElementById('planGrid');
+  var title=document.getElementById('planTitle');
+  var meta=document.getElementById('planMeta');
+  var lockPill=document.getElementById('lockPill');
+  var lockBtn=document.getElementById('lockBtn');
+  if(!g || !g.plan){
+    host.innerHTML='<div class="muted">No plan yet. Go to Setup and tap “Generate Plan”.</div>';
+    document.getElementById('planSummary').innerHTML='';
+    title.textContent='Plan'; meta.textContent=''; lockPill.style.display='none';
+    return;
+  }
+  title.textContent=g.name||'Plan';
+  var stat=computeStats(g);
+  var mins=Object.keys(stat).map(function(k){return stat[k].min;});
+  var spread = mins.length? (Math.max.apply(null,mins)-Math.min.apply(null,mins)) : 0;
+  meta.textContent = g.periods+' periods × '+g.minutes+' min · '+Object.keys(stat).length+' available · minutes spread '+spread+' min';
+  lockPill.style.display = g.locked? 'inline-block':'none';
+  lockBtn.textContent = g.locked? 'Unlock plan':'Lock plan';
+
+  var flags=computeFlags(g);
+  var P=g.plan.periods.length;
+  var tbl=el('table','plan');
+  var thead=el('thead'); var htr=el('tr'); htr.appendChild(el('th','','Slot'));
+  for(var p=0;p<P;p++) htr.appendChild(el('th','','P'+(p+1)));
+  thead.appendChild(htr); tbl.appendChild(thead);
+  var tb=el('tbody');
+  SLOTS.forEach(function(slot){
+    var tr=el('tr');
+    var th=el('th'); th.appendChild(el('span','slotlab',slot.label)); tr.appendChild(th);
+    for(var pi=0;pi<P;pi++){
+      (function(pi){
+        var td=el('td');
+        var pid=g.plan.periods[pi][slot.key];
+        var cell=el('div','cell'+(pid?'':' empty'));
+        var who=el('div','who', pid? shortName(byId(pid)) : '—');
+        cell.appendChild(who);
+        var fl=flags[pi+'|'+slot.key];
+        if(fl){ var fw=el('div','flags'); fl.forEach(function(x){ var b=el('span','fl '+x.cls,x.t); b.title=x.title; fw.appendChild(b); }); cell.appendChild(fw); }
+        if(ui.selCell && ui.selCell.pi===pi && ui.selCell.key===slot.key) td.classList.add('sel');
+        cell.onclick=function(){ if(g.locked){ toast('Plan locked'); return; } onCellTap(pi, slot.key); };
+        td.appendChild(cell); tr.appendChild(td);
+      })(pi);
+    }
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  host.innerHTML=''; host.appendChild(tbl);
+
+  renderPlanSummary(g, stat);
+}
+function shortName(pl){ if(!pl) return '—'; var parts=pl.name.split(/\s+/); return parts[0] + (parts[1]? ' '+parts[1][0]:''); }
+
+function renderPlanSummary(g, stat){
+  var host=document.getElementById('planSummary');
+  var arr=Object.keys(stat).map(function(k){return stat[k];});
+  arr.sort(function(a,b){ return b.min-a.min || byId(a.id).name.localeCompare(byId(b.id).name); });
+  var maxMin=Math.max.apply(null, arr.map(function(a){return a.min;}).concat([1]));
+  var tbl=el('table','sumtable');
+  var head=el('tr'); ['Player','Total','Field','GK','Per','Bench',''].forEach(function(h){ head.appendChild(el('th','',h)); });
+  tbl.appendChild(head);
+  arr.forEach(function(s){
+    var tr=el('tr');
+    tr.appendChild(el('td','nm', shortName(byId(s.id))));
+    tr.appendChild(el('td','',s.min+"'"));
+    tr.appendChild(el('td','',s.field+"'"));
+    tr.appendChild(el('td','',s.gk?(s.gk+"'"):'—'));
+    tr.appendChild(el('td','',String(s.periods)));
+    tr.appendChild(el('td','',String(s.bench)));
+    var bt=el('td',''); var bar=el('div','bar'); var sp=el('span'); sp.style.width=Math.round(s.min/maxMin*100)+'%'; bar.appendChild(sp); bt.appendChild(bar); tr.appendChild(bt);
+    tbl.appendChild(tr);
+  });
+  host.innerHTML=''; host.appendChild(tbl);
+}
+
+/* Cell tap -> substitution sheet */
+function onCellTap(pi, slotKey){
+  var g=currentGame();
+  var slot=SLOT_BY_KEY[slotKey];
+  var curId=g.plan.periods[pi][slotKey];
+  var sheet=document.getElementById('sheet'); sheet.innerHTML='';
+  sheet.appendChild(el('h3',null,'P'+(pi+1)+' · '+slot.label + (curId? ' — '+shortName(byId(curId)) : ' — empty')));
+
+  // Who is on field this period
+  var onFieldIds={}; SLOTS.forEach(function(s){ var id=g.plan.periods[pi][s.key]; if(id) onFieldIds[id]=s.key; });
+  var availIds = state.players.filter(function(p){return g.availability[p.id]!==false;}).map(function(p){return p.id;});
+  var benchIds = availIds.filter(function(id){ return !onFieldIds[id]; });
+
+  // Bench substitutions
+  sheet.appendChild(el('div','fld small','Sub in from bench')).style.marginTop='4px';
+  if(!benchIds.length) sheet.appendChild(el('div','muted small','No bench players this period.'));
+  benchIds.map(byId).sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(pl){
+    var c=el('div','choice');
+    var av=el('div','avatar',initials(pl.name)); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
+    var nm=el('div','grow'); nm.appendChild(el('div','',shortName(pl)));
+    var e=eligRank(pl,slot.pos); var note=(e<0?'out of position':(e===0?'primary':(e===1?'secondary':'tertiary')));
+    if(footMismatch(pl,slot)) note+=' · wrong foot';
+    nm.appendChild(el('div','muted small', note)); c.appendChild(nm);
+    c.onclick=function(){ pushUndo(); doSub(pi, slotKey, pl.id); closeSheet(); };
+    sheet.appendChild(c);
+  });
+
+  // Swap with another on-field slot
+  sheet.appendChild(el('div','fld small','Swap position with')).style.marginTop='8px';
+  SLOTS.forEach(function(s){
+    if(s.key===slotKey) return;
+    var oid=g.plan.periods[pi][s.key]; if(!oid) return;
+    var pl=byId(oid);
+    var c=el('div','choice');
+    c.appendChild(el('div','pill',s.label));
+    var nm=el('div','grow'); nm.appendChild(el('div','',shortName(pl))); c.appendChild(nm);
+    c.onclick=function(){ pushUndo(); swapSlots(pi, slotKey, s.key); closeSheet(); };
+    sheet.appendChild(c);
+  });
+
+  if(curId){
+    var rm=el('button','btn sec','Clear this slot'); rm.style.marginTop='10px'; rm.style.width='100%';
+    rm.onclick=function(){ pushUndo(); g.plan.periods[pi][slotKey]=null; save(); renderPlan(); renderLive(); closeSheet(); };
+    sheet.appendChild(rm);
+  }
+  var cancel=el('button','btn ghost','Cancel'); cancel.style.marginTop='8px'; cancel.style.width='100%'; cancel.onclick=closeSheet;
+  sheet.appendChild(cancel);
+  openSheet();
+}
+function doSub(pi, slotKey, newId){
+  var g=currentGame();
+  // if newId currently on field elsewhere this period, swap; else place (displaced -> bench)
+  var period=g.plan.periods[pi];
+  var otherKey=null; for(var k in period){ if(period[k]===newId){ otherKey=k; break; } }
+  var displaced=period[slotKey];
+  period[slotKey]=newId;
+  if(otherKey) period[otherKey]=displaced; // swap
+  save(); renderPlan(); renderLive(); toast('Substituted');
+}
+function swapSlots(pi, a, b){
+  var g=currentGame(); var period=g.plan.periods[pi];
+  var t=period[a]; period[a]=period[b]; period[b]=t;
+  save(); renderPlan(); renderLive(); toast('Swapped');
+}
+
+/* ----- Live ----- */
+var timer={ remaining:0, running:false, handle:null, warned:false };
+
+function currentLivePeriod(){ var g=currentGame(); return g && g.live? (g.live.period||0):0; }
+
+function renderLive(){
+  var g=currentGame();
+  document.getElementById('liveGame').textContent = g? (g.name||'Game') : '—';
+  var pi=currentLivePeriod();
+  document.getElementById('livePeriodPill').textContent = g? ('Period '+(pi+1)+' / '+g.periods) : 'Period —';
+  if(!g || !g.plan){
+    document.getElementById('liveField').innerHTML='<div class="muted">No plan. Generate one first.</div>';
+    document.getElementById('liveMinutes').innerHTML='';
+    document.getElementById('subCardWrap').innerHTML='';
+    return;
+  }
+  renderLiveField(g, pi);
+  renderLiveMinutes(g, pi);
+  renderSubCard(g, pi, timer.remaining);
+}
+
+function renderLiveField(g, pi){
+  var host=document.getElementById('liveField'); host.innerHTML='';
+  var ap=g.plan.periods[pi]||{};
+  var wrap=el('div','livemin');
+  SLOTS.forEach(function(s){
+    var pid=ap[s.key];
+    var m=el('div','m');
+    m.appendChild(el('span','', s.label));
+    m.appendChild(el('span','', pid? shortName(byId(pid)) : '—'));
+    wrap.appendChild(m);
+  });
+  host.appendChild(wrap);
+}
+
+function renderLiveMinutes(g, pi){
+  var host=document.getElementById('liveMinutes'); host.innerHTML='';
+  // running minutes = completed periods (0..pi-1) fully + current period counts as in progress (we count completed only for clarity + include current as playing)
+  var stat={};
+  state.players.forEach(function(pl){ if(g.availability[pl.id]!==false) stat[pl.id]={min:0,gk:0}; });
+  for(var p=0;p<=pi && p<g.plan.periods.length;p++){
+    var ap=g.plan.periods[p];
+    SLOTS.forEach(function(s){ var pid=ap[s.key]; if(pid&&stat[pid]){ stat[pid].min+=g.minutes; if(s.key==='GK')stat[pid].gk+=g.minutes; } });
+  }
+  var arr=Object.keys(stat).map(function(k){return {id:k,min:stat[k].min,gk:stat[k].gk};});
+  arr.sort(function(a,b){return b.min-a.min;});
+  arr.forEach(function(s){
+    var m=el('div','m');
+    m.appendChild(el('span','', shortName(byId(s.id))));
+    m.appendChild(el('span','', s.min+"'"+(s.gk?(' · GK '+s.gk+"'"):'')));
+    host.appendChild(m);
+  });
+}
+
+function computeSubs(g, fromPi){
+  var toPi=fromPi+1; if(toPi>=g.plan.periods.length) return null;
+  var a=g.plan.periods[fromPi], b=g.plan.periods[toPi];
+  var changes=[];
+  SLOTS.forEach(function(s){
+    if(a[s.key]!==b[s.key]) changes.push({slot:s.label, off:a[s.key], on:b[s.key]});
+  });
+  return changes;
+}
+
+function renderSubCard(g, pi, remaining){
+  var host=document.getElementById('subCardWrap'); host.innerHTML='';
+  var subs=computeSubs(g, pi);
+  if(!subs || !subs.length) return;
+  var near = timer.running && remaining>0 && remaining<=WARN_SECONDS;
+  var card=el('div', near?'subcard':'panel');
+  card.appendChild(el('h2', null, near? ('⚠️ SUBS in '+remaining+'s — end of Period '+(pi+1)) : ('Upcoming subs → Period '+(pi+2))));
+  subs.forEach(function(c){
+    var r=el('div','subrow');
+    r.appendChild(el('span','pill',c.slot));
+    if(c.off){ var o=el('span','off','OFF '+shortName(byId(c.off))); r.appendChild(o); }
+    r.appendChild(el('span','','→'));
+    if(c.on){ var on=el('span','on','ON '+shortName(byId(c.on))); r.appendChild(on); }
+    if(!c.off) r.appendChild(el('span','muted','(new)'));
+    if(!c.on) r.appendChild(el('span','muted','(empty)'));
+    card.appendChild(r);
+  });
+  host.appendChild(card);
+}
+
+/* Timer controls */
+function setClock(){
+  var g=currentGame(); if(!g) return;
+  var mm=Math.floor(timer.remaining/60), ss=timer.remaining%60;
+  var c=document.getElementById('clock');
+  c.textContent=(mm<10?'0':'')+mm+':'+(ss<10?'0':'')+ss;
+  c.classList.toggle('warn', timer.remaining<=WARN_SECONDS && timer.remaining>0);
+  c.classList.toggle('done', timer.remaining<=0);
+}
+function initClock(){
+  var g=currentGame(); timer.remaining = g? g.minutes*60 : 0; timer.warned=false; setClock(); renderLive();
+}
+function tick(){
+  if(!timer.running) return;
+  timer.remaining--;
+  if(timer.remaining===WARN_SECONDS){ triggerSubAlert(); }
+  if(timer.remaining<=0){ timer.remaining=0; timer.running=false; clearInterval(timer.handle); alertEnd(); }
+  setClock();
+  var g=currentGame(); if(g) renderSubCard(g, currentLivePeriod(), timer.remaining);
+}
+function startTimer(){
+  if(timer.running) return;
+  if(timer.remaining<=0) initClock();
+  timer.running=true; timer.handle=setInterval(tick,1000);
+  primeAudio();
+}
+function pauseTimer(){ timer.running=false; clearInterval(timer.handle); }
+function resetTimer(){ pauseTimer(); initClock(); }
+function nextPeriod(){
+  var g=currentGame(); if(!g) return;
+  pauseTimer();
+  if(g.live.period < g.plan.periods.length-1){ g.live.period++; save(); }
+  else { toast('Last period'); }
+  initClock();
+}
+
+/* Alerts: sound + vibration + on-screen card */
+var audioCtx=null;
+function primeAudio(){ try{ if(!audioCtx){ audioCtx=new (window.AudioContext||window.webkitAudioContext)(); } if(audioCtx.state==='suspended') audioCtx.resume(); }catch(e){} }
+function beep(times){
+  try{
+    primeAudio(); if(!audioCtx) return;
+    var t=audioCtx.currentTime;
+    for(var i=0;i<(times||1);i++){
+      var o=audioCtx.createOscillator(), gnode=audioCtx.createGain();
+      o.type='square'; o.frequency.value=880;
+      o.connect(gnode); gnode.connect(audioCtx.destination);
+      var st=t+i*0.28;
+      gnode.gain.setValueAtTime(0.0001, st);
+      gnode.gain.exponentialRampToValueAtTime(0.35, st+0.02);
+      gnode.gain.exponentialRampToValueAtTime(0.0001, st+0.22);
+      o.start(st); o.stop(st+0.24);
+    }
+  }catch(e){}
+}
+function vibrate(pattern){ try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(e){} }
+function triggerSubAlert(){
+  var g=currentGame(); var subs=computeSubs(g, currentLivePeriod());
+  if(subs && subs.length){ beep(2); vibrate([200,100,200]); toast('⏱️ Subs coming up!'); }
+}
+function alertEnd(){ beep(3); vibrate([300,120,300,120,300]); toast('Period over — tap Next period'); }
+
+/* Mark player OUT mid-game -> replan remaining periods */
+function openMarkOut(){
+  var g=currentGame(); if(!g||!g.plan){ toast('No plan'); return; }
+  var pi=currentLivePeriod();
+  var sheet=document.getElementById('sheet'); sheet.innerHTML='';
+  sheet.appendChild(el('h3',null,'Mark player OUT (injury / left)'));
+  sheet.appendChild(el('div','muted small','Removes the player for the rest of the game and re-plans remaining periods. Periods up to and including the current one are kept.'));
+  var availPlayers = state.players.filter(function(p){return g.availability[p.id]!==false;});
+  availPlayers.sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(pl){
+    var c=el('div','choice');
+    var av=el('div','avatar',initials(pl.name)); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
+    c.appendChild(el('div','grow', pl.name));
+    c.onclick=function(){
+      if(!confirm('Mark '+pl.name+' OUT and re-plan from period '+(pi+2)+'?')) return;
+      pushUndo();
+      markPlayerOut(pl.id, pi);
+      closeSheet();
+    };
+    sheet.appendChild(c);
+  });
+  var cancel=el('button','btn ghost','Cancel'); cancel.style.width='100%'; cancel.style.marginTop='8px'; cancel.onclick=closeSheet;
+  sheet.appendChild(cancel);
+  openSheet();
+}
+function markPlayerOut(pid, currentPi){
+  var g=currentGame();
+  g.availability[pid]=false;
+  // keep periods 0..currentPi, but remove the out player from current & future filled periods
+  var fromPeriod=currentPi+1;
+  // compute accumulated minutes through currentPi (kept periods)
+  var startMin={}, startGk={};
+  state.players.forEach(function(p){ startMin[p.id]=0; startGk[p.id]=0; });
+  var fixed=[];
+  for(var p=0;p<fromPeriod;p++){
+    var ap=Object.assign({}, g.plan.periods[p]);
+    // if the out player is on field in a kept period, leave them (already played) — but null out current period future presence? They already played those minutes.
+    SLOTS.forEach(function(s){ var id=ap[s.key]; if(id){ startMin[id]+=g.minutes; if(s.key==='GK') startGk[id]+=g.minutes; } });
+    fixed.push(ap);
+  }
+  var np=generatePlan(g, { fromPeriod:fromPeriod, fixedPeriods:fixed, startMinutes:startMin, startGkMin:startGk });
+  g.plan=np; save();
+  renderAvailability(); renderPlan(); renderLive();
+  toast('Re-planned remaining periods');
+}
+
+/* ----- Export / Print ----- */
+function planToText(g){
+  var lines=[];
+  lines.push('LINEUP — '+(g.name||'Game'));
+  lines.push('Formation 4-3-3 · '+g.periods+' periods × '+g.minutes+' min');
+  lines.push('');
+  var header='Slot'.padEnd(8);
+  for(var p=0;p<g.plan.periods.length;p++) header+=('P'+(p+1)).padEnd(14);
+  lines.push(header);
+  SLOTS.forEach(function(s){
+    var row=s.label.padEnd(8);
+    for(var pi=0;pi<g.plan.periods.length;pi++){
+      var pid=g.plan.periods[pi][s.key];
+      row+= (pid? shortName(byId(pid)) : '—').padEnd(14);
+    }
+    lines.push(row);
+  });
+  lines.push('');
+  lines.push('MINUTES');
+  var stat=computeStats(g);
+  Object.keys(stat).map(function(k){return stat[k];}).sort(function(a,b){return b.min-a.min;}).forEach(function(s){
+    lines.push(shortName(byId(s.id)).padEnd(16)+ (s.min+"' total  ")+(s.field+"' field  ")+(s.gk?(s.gk+"' GK"):''));
+  });
+  return lines.join('\n');
+}
+function exportText(){
+  var g=currentGame(); if(!g||!g.plan){ toast('No plan'); return; }
+  var txt=planToText(g);
+  var sheet=document.getElementById('sheet'); sheet.innerHTML='';
+  sheet.appendChild(el('h3',null,'Export plan (copy)'));
+  var ta=el('textarea'); ta.value=txt; ta.style.width='100%'; ta.style.minHeight='260px'; ta.readOnly=true; sheet.appendChild(ta);
+  var row=el('div','row'); row.style.marginTop='10px';
+  var copy=el('button','btn grow','Copy to clipboard');
+  copy.onclick=function(){
+    ta.select();
+    try{ navigator.clipboard.writeText(txt); toast('Copied'); }
+    catch(e){ try{ document.execCommand('copy'); toast('Copied'); }catch(e2){ toast('Select & copy manually'); } }
+  };
+  row.appendChild(copy);
+  var close=el('button','btn sec','Close'); close.onclick=closeSheet; row.appendChild(close);
+  sheet.appendChild(row);
+  openSheet();
+}
+
+/* ============================================================
+   TABS / SHEET / WIRING
+   ============================================================ */
+function switchTab(name){
+  ui.tab=name; ui.selCell=null;
+  ['roster','setup','plan','live'].forEach(function(t){
+    document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.tabbar button'), function(b){
+    b.classList.toggle('active', b.getAttribute('data-tab')===name);
+  });
+  if(name==='roster') renderRoster();
+  if(name==='setup'){ loadGameIntoSetup(); }
+  if(name==='plan') renderPlan();
+  if(name==='live'){ initClock(); renderLive(); }
+  window.scrollTo(0,0);
+}
+function openSheet(){ document.getElementById('overlay').classList.add('show'); }
+function closeSheet(){ document.getElementById('overlay').classList.remove('show'); }
+
+function renderAll(){ renderRoster(); renderAvailability(); renderSavedGames(); renderPlan(); renderLive(); updateGameLabel(); }
+
+function doGenerate(){
+  var g=ensureGame();
+  var availN = state.players.filter(function(p){return g.availability[p.id]!==false;}).length;
+  if(availN<11){ toast('Need at least 11 available (have '+availN+')'); }
+  pushUndo();
+  g.plan=generatePlan(g);
+  g.locked=false; g.live={period:0};
+  save(); renderPlan(); renderSavedGames(); updateGameLabel();
+  switchTab('plan');
+  toast('Plan generated');
+}
+
+function wire(){
+  Array.prototype.forEach.call(document.querySelectorAll('.tabbar button'), function(b){
+    b.onclick=function(){ switchTab(b.getAttribute('data-tab')); };
+  });
+  document.getElementById('addPlayerBtn').onclick=function(){ openPlayerSheet(null); };
+  document.getElementById('overlay').onclick=function(e){ if(e.target===this) closeSheet(); };
+  document.getElementById('undoBtn').onclick=doUndo;
+
+  document.getElementById('newGameBtn').onclick=function(){ newGame(); loadGameIntoSetup(); renderAll(); toast('New game'); };
+  document.getElementById('generateBtn').onclick=doGenerate;
+  document.getElementById('allInBtn').onclick=function(){ var g=ensureGame(); state.players.forEach(function(p){g.availability[p.id]=true;}); save(); renderAvailability(); };
+  document.getElementById('allOutBtn').onclick=function(){ var g=ensureGame(); state.players.forEach(function(p){g.availability[p.id]=false;}); save(); renderAvailability(); };
+  ['gameName','gamePeriods','gameMinutes'].forEach(function(idn){
+    document.getElementById(idn).onchange=function(){ ensureGame(); renderSavedGames(); updateGameLabel(); };
+  });
+
+  document.getElementById('regenBtn').onclick=function(){ var g=currentGame(); if(!g){toast('No game');return;} if(g.locked){toast('Unlock first');return;} pushUndo(); g.plan=generatePlan(g); save(); renderPlan(); toast('Regenerated'); };
+  document.getElementById('lockBtn').onclick=function(){ var g=currentGame(); if(!g||!g.plan)return; g.locked=!g.locked; save(); renderPlan(); toast(g.locked?'Locked':'Unlocked'); };
+  document.getElementById('exportBtn').onclick=exportText;
+  document.getElementById('printBtn').onclick=function(){ window.print(); };
+  document.getElementById('dupBtn').onclick=function(){ var g=currentGame(); if(g) duplicateGame(g.id); };
+
+  document.getElementById('startBtn').onclick=startTimer;
+  document.getElementById('pauseBtn').onclick=pauseTimer;
+  document.getElementById('resetBtn').onclick=resetTimer;
+  document.getElementById('nextBtn').onclick=nextPeriod;
+  document.getElementById('markOutBtn').onclick=openMarkOut;
+}
+
+/* ---------- Boot ---------- */
+function boot(){
+  load();
+  if(!currentGame() && state.games.length) state.currentGameId=state.games[state.games.length-1].id;
+  wire();
+  renderAll();
+  switchTab('roster');
+}
+document.addEventListener('DOMContentLoaded', boot);
+
+/* Expose a few internals for testing in a desktop browser */
+window.__LM__ = {
+  get state(){return state;},
+  generatePlan:generatePlan, computeStats:computeStats, computeFlags:computeFlags,
+  SLOTS:SLOTS, byId:byId
+};
+</script>
+</body>
+</html>
