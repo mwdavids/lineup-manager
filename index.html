@@ -234,6 +234,21 @@
       <h2>Saved games</h2>
       <div id="savedGames"></div>
     </div>
+
+    <div class="panel noprint">
+      <h2>Sync between devices</h2>
+      <div class="muted small" style="margin-bottom:10px">Make a lineup on your computer, open it on your iPad — no account, no server. Share links keep all data in the link itself (after the <b>#</b>), so nothing is uploaded.</div>
+      <div class="row">
+        <button class="btn sec sm" id="shareGameBtn2">🔗 Share this game</button>
+        <button class="btn sec sm" id="shareRosterBtn">🔗 Share roster</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn sec sm" id="exportDataBtn">⬇️ Export data (.json)</button>
+        <button class="btn sec sm" id="copyBackupBtn">🧾 Copy backup code</button>
+        <button class="btn sec sm" id="importDataBtn">⬆️ Import data</button>
+      </div>
+      <input type="file" id="importFileInput" accept=".json,application/json" class="hidden" />
+    </div>
   </section>
 
   <!-- PLAN -->
@@ -267,6 +282,7 @@
     </div>
     <div class="panel noprint">
       <div class="row">
+        <button class="btn sec sm" id="shareGameBtn">🔗 Share game link</button>
         <button class="btn sec sm" id="exportBtn">📋 Export text</button>
         <button class="btn sec sm" id="printBtn">🖨️ Print view</button>
         <button class="btn sec sm" id="dupBtn">⧉ Duplicate game</button>
@@ -1503,6 +1519,269 @@ function exportText(){
 }
 
 /* ============================================================
+   CROSS-DEVICE SHARE / EXPORT / IMPORT
+   ============================================================ */
+var SHARE_V = 1; // payload schema version (bump if payload shape changes)
+function _clone(o){ return JSON.parse(JSON.stringify(o)); }
+function _pad2(n){ return (n<10?'0':'')+n; }
+// UTF-8 safe base64 <-> string
+function utf8ToB64(str){ return btoa(unescape(encodeURIComponent(str))); }
+function b64ToUtf8(b64){ return decodeURIComponent(escape(atob(b64))); }
+// URL-fragment-safe encoding of an object
+function encodePayload(obj){
+  var b64=utf8ToB64(JSON.stringify(obj));
+  return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function decodePayload(s){
+  var b64=String(s).replace(/-/g,'+').replace(/_/g,'/');
+  while(b64.length%4) b64+='=';
+  return JSON.parse(b64ToUtf8(b64));
+}
+// players a game references (availability keys + plan slot ids)
+function playersForGame(g){
+  var ids={};
+  if(g.availability) Object.keys(g.availability).forEach(function(id){ ids[id]=1; });
+  if(g.plan && g.plan.segments) g.plan.segments.forEach(function(seg){ for(var k in seg.slots){ if(seg.slots[k]) ids[seg.slots[k]]=1; } });
+  return state.players.filter(function(p){ return ids[p.id]; }).map(_clone);
+}
+function makeGamePayload(g){ return { app:'lineup-manager', v:SHARE_V, ls:LS_KEY, type:'game', game:_clone(g), players:playersForGame(g) }; }
+function makeRosterPayload(){ return { app:'lineup-manager', v:SHARE_V, ls:LS_KEY, type:'roster', players:_clone(state.players) }; }
+function makeFullPayload(){ return { app:'lineup-manager', v:SHARE_V, ls:LS_KEY, type:'full', state:_clone(state) }; }
+
+function appBaseUrl(){
+  var origin=location.origin;
+  if(origin && origin!=='null') return origin + location.pathname;
+  return (location.href.split('#')[0]) || '';
+}
+function shareUrl(key, obj){ return appBaseUrl() + '#' + key + '=' + encodePayload(obj); }
+
+function copyToClipboard(text, ta){
+  try{ if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text); return true; } }catch(e){}
+  try{ if(ta){ ta.focus(); ta.select(); if(document.execCommand('copy')) return true; } }catch(e){}
+  return false;
+}
+
+function showShareSheet(title, note, link){
+  var sheet=document.getElementById('sheet'); sheet.innerHTML='';
+  sheet.appendChild(el('h3',null,title));
+  if(note) sheet.appendChild(el('div','muted small',note));
+  var ta=el('textarea'); ta.value=link; ta.readOnly=true; ta.style.width='100%'; ta.style.minHeight='120px'; ta.style.marginTop='8px';
+  ta.style.wordBreak='break-all'; sheet.appendChild(ta);
+  if(link.length>8000) sheet.appendChild(el('div','muted small','Note: this is a long link. AirDrop, email, or Notes handle it fine; some SMS apps may truncate — use “Copy backup code” or Export data if so.'));
+  var row=el('div','row'); row.style.marginTop='10px';
+  var copy=el('button','btn grow','📋 Copy link');
+  copy.onclick=function(){ toast(copyToClipboard(link, ta)?'Copied link':'Select & copy manually'); };
+  row.appendChild(copy);
+  var close=el('button','btn sec','Close'); close.onclick=closeSheet; row.appendChild(close);
+  sheet.appendChild(row);
+  openSheet();
+  copyToClipboard(link, ta); // best-effort auto-copy
+}
+
+function shareCurrentGame(){
+  var g=currentGame();
+  if(!g){ toast('No game to share'); return; }
+  var link=shareUrl('g', makeGamePayload(g));
+  showShareSheet('Share game link', 'Send this to your other device (AirDrop / email / Notes). Opening it there adds this game — plan, availability, and pitch map — to that device.', link);
+}
+function shareRoster(){
+  if(!state.players.length){ toast('Roster is empty'); return; }
+  var link=shareUrl('r', makeRosterPayload());
+  showShareSheet('Share roster link', 'Send this to your other device to copy the roster (players, foot, positions). Opening it there will offer to replace that device’s roster.', link);
+}
+
+function exportDataFile(){
+  var data=JSON.stringify(makeFullPayload(), null, 2);
+  var blob=new Blob([data], {type:'application/json'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  var d=new Date(); var stamp=d.getFullYear()+_pad2(d.getMonth()+1)+_pad2(d.getDate());
+  a.href=url; a.download='lineup-backup-'+stamp+'.json';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} a.remove(); }, 800);
+  toast('Backup downloaded');
+}
+function copyBackupCode(){
+  var code=encodePayload(makeFullPayload());
+  var sheet=document.getElementById('sheet'); sheet.innerHTML='';
+  sheet.appendChild(el('h3',null,'Backup code'));
+  sheet.appendChild(el('div','muted small','Full backup (roster + all saved games + settings), base64-encoded. Paste it into “Import data” on another device.'));
+  var ta=el('textarea'); ta.value=code; ta.readOnly=true; ta.style.width='100%'; ta.style.minHeight='160px'; ta.style.wordBreak='break-all'; ta.style.marginTop='8px'; sheet.appendChild(ta);
+  var row=el('div','row'); row.style.marginTop='10px';
+  var copy=el('button','btn grow','📋 Copy code'); copy.onclick=function(){ toast(copyToClipboard(code, ta)?'Copied backup code':'Select & copy manually'); };
+  row.appendChild(copy);
+  var close=el('button','btn sec','Close'); close.onclick=closeSheet; row.appendChild(close);
+  sheet.appendChild(row);
+  openSheet(); copyToClipboard(code, ta);
+}
+
+function dedupeGameName(name){
+  name=name||'Game';
+  var exists={}; state.games.forEach(function(g){ exists[g.name]=1; });
+  if(!exists[name]) return name;
+  var i=2; while(exists[name+' ('+i+')']) i++;
+  return name+' ('+i+')';
+}
+function findPlayerByName(name){
+  var n=(name||'').trim().toLowerCase(); if(!n) return null;
+  for(var i=0;i<state.players.length;i++){ if((state.players[i].name||'').trim().toLowerCase()===n) return state.players[i]; }
+  return null;
+}
+// Attach shared players to the local roster by name; return id map (shared id -> local id).
+// Players with no local match are added (keeping their id).
+function reconcilePlayers(sharedPlayers){
+  var map={};
+  (sharedPlayers||[]).forEach(function(p){
+    var match=findPlayerByName(p.name);
+    if(match){ map[p.id]=match.id; }
+    else { var np=_clone(p); state.players.push(np); map[p.id]=np.id; }
+  });
+  return map;
+}
+function remapGameIds(g, map){
+  if(g.availability){ var na={}; Object.keys(g.availability).forEach(function(id){ na[map[id]||id]=g.availability[id]; }); g.availability=na; }
+  if(g.plan && g.plan.segments){ g.plan.segments.forEach(function(seg){ for(var k in seg.slots){ if(seg.slots[k]) seg.slots[k]=map[seg.slots[k]]||seg.slots[k]; } }); }
+  return g;
+}
+// robustly turn pasted text (raw JSON, base64 code, or a full share URL) into an object
+function parseImportText(txt){
+  txt=(txt||'').trim(); if(!txt) return null;
+  var hm=txt.match(/[#&][grf]=([^&\s]+)/);
+  if(hm){ try{ return decodePayload(hm[1]); }catch(e){} }
+  try{ return JSON.parse(txt); }catch(e){}
+  try{ return decodePayload(txt); }catch(e){}
+  return null;
+}
+function payloadType(obj){
+  if(!obj) return null;
+  if(obj.type) return obj.type;
+  if(obj.state && obj.state.players) return 'full';
+  if(obj.games && obj.players) return 'full';
+  if(obj.game) return 'game';
+  if(obj.players) return 'roster';
+  return null;
+}
+// route any decoded payload to the right importer; returns true on success
+function routeImport(obj, opts){
+  opts=opts||{};
+  if(!obj || (obj.app && obj.app!=='lineup-manager')){ toast('Unrecognized data'); return false; }
+  if(obj.v && obj.v>SHARE_V){ toast('This data is from a newer app version — please update.'); return false; }
+  var t=payloadType(obj);
+  if(t==='full') return importFullState(obj, opts);
+  if(t==='game') return importSharedGame(obj, opts);
+  if(t==='roster') return importSharedRoster(obj, opts);
+  toast('Unrecognized data format'); return false;
+}
+
+function importSharedGame(payload, opts){
+  opts=opts||{};
+  var g=payload.game;
+  if(!g || !g.availability){ toast('Invalid game link'); return false; }
+  var summary=(g.name||'Untitled game')+' — '+g.periods+'×'+g.minutes+"'"+(g.plan?' · planned':'');
+  var ok = (opts.silent || typeof confirm!=='function') ? true : confirm('Load shared game “'+summary+'”?\nThis adds it to your saved games (nothing is overwritten).');
+  if(!ok) return false;
+  var idMap=reconcilePlayers(payload.players); // attach by name, add missing
+  var copy=remapGameIds(_clone(g), idMap);
+  copy.id=uid('g');
+  copy.name=dedupeGameName(copy.name||'Shared game');
+  copy.live={period:0};
+  state.games.push(copy); state.currentGameId=copy.id;
+  save(); loadGameIntoSetup(); renderAll();
+  switchTab(copy.plan?'plan':'setup');
+  toast('Shared game loaded');
+  return true;
+}
+function importSharedRoster(payload, opts){
+  opts=opts||{};
+  var players=payload.players||[];
+  if(!players.length){ toast('No roster in that data'); return false; }
+  var ok = (opts.silent || typeof confirm!=='function') ? true : confirm('Sync roster from this link ('+players.length+' players)?\nUpdates foot & positions for matching names and adds any new players. Your saved games are kept.');
+  if(!ok) return false;
+  var added=0, updated=0;
+  players.forEach(function(p){
+    var match=findPlayerByName(p.name);
+    if(match){ match.foot=p.foot; match.positions=(p.positions||[]).slice(); updated++; }
+    else { state.players.push(_clone(p)); added++; }
+  });
+  save(); renderAll(); loadGameIntoSetup(); switchTab('roster');
+  toast('Roster synced — '+updated+' updated, '+added+' added');
+  return true;
+}
+function importFullState(obj, opts){
+  opts=opts||{};
+  var incoming = obj.type==='full'? obj.state : ((obj.players&&obj.games)? obj : null);
+  if(!incoming || !incoming.players){ toast('Unrecognized backup'); return false; }
+  var replaceRoster = opts.silent ? true : ((typeof confirm==='function') ? confirm('Import backup: replace your roster with the imported one ('+incoming.players.length+' players)?\nOK = replace roster.\nCancel = keep your roster (new players still merged in, games still imported).') : true);
+  if(replaceRoster){ state.players=incoming.players.map(_clone); }
+  else { incoming.players.forEach(function(p){ if(!byId(p.id)) state.players.push(_clone(p)); }); }
+  var existingIds={}; state.games.forEach(function(g){ existingIds[g.id]=1; });
+  var added=0;
+  (incoming.games||[]).forEach(function(g){
+    if(existingIds[g.id]) return; // de-dupe by id
+    var cp=_clone(g); cp.name=dedupeGameName(cp.name||'Game');
+    state.games.push(cp); existingIds[cp.id]=1; added++;
+  });
+  if(incoming.currentGameId && state.games.some(function(g){return g.id===incoming.currentGameId;})) state.currentGameId=incoming.currentGameId;
+  else if(!currentGame() && state.games.length) state.currentGameId=state.games[state.games.length-1].id;
+  save(); renderAll(); loadGameIntoSetup();
+  toast('Imported — '+state.players.length+' players, +'+added+' game'+(added===1?'':'s'));
+  return true;
+}
+
+function openImportSheet(){
+  var sheet=document.getElementById('sheet'); sheet.innerHTML='';
+  sheet.appendChild(el('h3',null,'Import data'));
+  sheet.appendChild(el('div','muted small','Choose a backup .json file, or paste a backup code / share link below.'));
+  var frow=el('div','row'); frow.style.marginTop='10px';
+  var pick=el('button','btn sec','📁 Choose file…'); pick.onclick=function(){ document.getElementById('importFileInput').click(); };
+  frow.appendChild(pick);
+  var fname=el('span','muted small',''); fname.id='importFileName'; frow.appendChild(fname);
+  sheet.appendChild(frow);
+  var ta=el('textarea'); ta.placeholder='…or paste a backup code / #g= link / JSON here'; ta.style.width='100%'; ta.style.minHeight='120px'; ta.style.marginTop='10px'; sheet.appendChild(ta);
+  var row=el('div','row'); row.style.marginTop='10px';
+  var imp=el('button','btn grow','Import from pasted text');
+  imp.onclick=function(){
+    var obj=parseImportText(ta.value);
+    if(!obj){ toast('Could not read that — check the code/link'); return; }
+    closeSheet(); routeImport(obj);
+  };
+  row.appendChild(imp);
+  var close=el('button','btn sec','Cancel'); close.onclick=closeSheet; row.appendChild(close);
+  sheet.appendChild(row);
+  openSheet();
+}
+function handleImportFile(file){
+  if(!file) return;
+  var lbl=document.getElementById('importFileName'); if(lbl) lbl.textContent=file.name;
+  var reader=new FileReader();
+  reader.onload=function(){
+    var obj=parseImportText(String(reader.result));
+    if(!obj){ toast('That file isn’t a valid backup'); return; }
+    closeSheet(); routeImport(obj);
+  };
+  reader.onerror=function(){ toast('Could not read file'); };
+  reader.readAsText(file);
+}
+
+// On load: import a #g= (game) or #r= (roster) share link, with confirmation
+function checkHashImport(){
+  var h=location.hash||''; if(!h || h.length<3) return false;
+  var m=h.match(/[#&]([grf])=([^&]+)/);
+  if(!m) return false;
+  var enc=m[2], obj=null;
+  try{ obj=decodePayload(enc); }catch(e){ obj=null; }
+  clearHash();
+  if(!obj){ toast('Shared link could not be read'); return false; }
+  return routeImport(obj);
+}
+function clearHash(){
+  try{
+    if(history && history.replaceState) history.replaceState(null, '', location.pathname + location.search);
+    else location.hash='';
+  }catch(e){ try{ location.hash=''; }catch(e2){} }
+}
+
+/* ============================================================
    TABS / SHEET / WIRING
    ============================================================ */
 function switchTab(name){
@@ -1567,6 +1846,14 @@ function wire(){
   document.getElementById('exportBtn').onclick=exportText;
   document.getElementById('printBtn').onclick=function(){ window.print(); };
   document.getElementById('dupBtn').onclick=function(){ var g=currentGame(); if(g) duplicateGame(g.id); };
+  document.getElementById('shareGameBtn').onclick=shareCurrentGame;
+
+  document.getElementById('shareGameBtn2').onclick=shareCurrentGame;
+  document.getElementById('shareRosterBtn').onclick=shareRoster;
+  document.getElementById('exportDataBtn').onclick=exportDataFile;
+  document.getElementById('copyBackupBtn').onclick=copyBackupCode;
+  document.getElementById('importDataBtn').onclick=openImportSheet;
+  document.getElementById('importFileInput').onchange=function(e){ handleImportFile(e.target.files&&e.target.files[0]); e.target.value=''; };
 
   document.getElementById('startBtn').onclick=startTimer;
   document.getElementById('pauseBtn').onclick=pauseTimer;
@@ -1585,6 +1872,7 @@ function boot(){
   wire();
   renderAll();
   switchTab('roster');
+  try{ if(checkHashImport()) return; }catch(e){}
 }
 document.addEventListener('DOMContentLoaded', boot);
 
@@ -1594,7 +1882,11 @@ window.__LM__ = {
   generatePlan:generatePlan, computeStats:computeStats, computeFlags:computeFlags,
   buildSegments:buildSegments, buildGkSchedule:buildGkSchedule,
   segTransition:segTransition, slotEligRank:slotEligRank, PITCH:PITCH,
-  SLOTS:SLOTS, byId:byId
+  SLOTS:SLOTS, byId:byId,
+  encodePayload:encodePayload, decodePayload:decodePayload,
+  makeGamePayload:makeGamePayload, makeRosterPayload:makeRosterPayload, makeFullPayload:makeFullPayload,
+  shareUrl:shareUrl, routeImport:routeImport, checkHashImport:checkHashImport,
+  parseImportText:parseImportText, currentGame:currentGame, save:save
 };
 </script>
 </body>

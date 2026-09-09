@@ -37,11 +37,49 @@ For a full-screen, app-like experience:
 
 - All roster and game data is saved in this browser's **`localStorage`**. It persists
   between sessions on the same device/browser.
-- Because storage is local: data is **per-device** and is **not** synced or backed up.
-  Use **Plan → Export text** to copy a plan out if you want a shareable/backup copy.
+- Because storage is local: data is **per-device**. To move a lineup or roster to another
+  device (e.g. plan on your computer, coach from your iPad), use **Sync between devices**
+  below — no account or server required.
 - Clearing Safari website data (or "Add to Home Screen" vs. regular Safari being treated
   as separate storage) will reset the app. Keep one launch method for continuity.
 - The pre-seeded 19-player roster loads automatically the first time.
+
+## Sync between devices
+
+Everything is still **fully offline** — these features move data via links and files you
+control; nothing is ever uploaded to a server.
+
+### Share link (easiest: plan on computer → open on iPad)
+
+1. On the device where you built the plan, open the **Plan** tab (or **Game Setup**) and tap
+   **🔗 Share game link**. The link is copied to your clipboard and shown so you can select it.
+2. Send it to your other device however you like — **AirDrop, email, Messages, or Notes**.
+3. Open the link on the iPad. The app asks **"Load shared game?"**; confirm, and the game —
+   its periods/minutes/sub-interval, availability, the full plan, and the pitch map — is added
+   to that device's **Saved games** and opened. Nothing you already had is overwritten.
+
+The entire game is encoded in the part of the URL **after the `#`**, which browsers never send
+to a server, so your data stays private and it works offline.
+
+- **Share roster** (Game Setup → **🔗 Share roster**) makes a `#r=…` link that syncs just the
+  players (foot + positions). Opening it updates matching names and adds any new players,
+  keeping that device's saved games.
+- Shared games attach to the local roster **by player name**, so importing doesn't create
+  duplicate players when both devices started from the same roster.
+
+### Export / Import (full backup & fallback)
+
+On **Game Setup → Sync between devices**:
+
+- **⬇️ Export data (.json)** downloads a file with your **entire app state** (roster + every
+  saved game + settings). **🧾 Copy backup code** puts the same thing on your clipboard as a
+  compact code.
+- **⬆️ Import data** accepts either an uploaded `.json` file **or** a pasted backup code /
+  share link. Your roster can be replaced (you're asked first) and saved games are merged in,
+  de-duped so you don't get repeats.
+
+Payloads are **versioned**, so older links keep working; anything unrecognized fails with a
+clear message instead of corrupting your data.
 
 ## Feature overview
 
@@ -64,6 +102,8 @@ For a full-screen, app-like experience:
 - Toggle each player available/unavailable **for that game**.
 - **Generate Plan** builds the lineup.
 - Saved games list: open, duplicate, or delete prior game days.
+- **Sync between devices**: share the current game or roster as a link, or export/import a
+  full `.json` backup or code (see the [Sync](#sync-between-devices) section above).
 
 ### Plan tab
 - Grid of **position (rows) × sub window (columns)**, grouped under each half, showing who
@@ -84,7 +124,8 @@ For a full-screen, app-like experience:
   *moving position*, a red **OFF** badge for players *coming off*, and green dashed arrows +
   an **ON … ▸ slot** strip for bench players *coming on* — so you can literally show a kid
   "you're going here next." **Tap any player** to trace their slot across every window.
-- **Export text** (copyable) and **Print view** (print-friendly).
+- **Export text** (copyable) and **Print view** (print-friendly), plus **🔗 Share game link**
+  to send the whole game (plan + pitch map) to another device.
 
 ### Live tab
 - Big per-period **countdown timer**: start / pause / reset / next period.
