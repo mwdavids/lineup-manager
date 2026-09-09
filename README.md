@@ -5,6 +5,11 @@ fixed **4-3-3** from an iPad on the sideline. Everything lives in one `index.htm
 CSS + vanilla JavaScript, **no build step, no server, no network requests**. All data is
 stored locally in your browser via `localStorage`.
 
+The midfield three is a single **Defensive Mid (DM)** at the base with **two Attacking Mids
+(AM)** ahead of it — so the slots are GK · RB · CB · CB · LB · **DM · AM · AM** · RW · ST · LW.
+Players whose listed positions include **CM are automatically eligible for the AM slots**, so
+your existing roster maps cleanly without relabelling anyone.
+
 ## What it does
 
 - Manages your roster (foot + up to three positions per player).
@@ -70,10 +75,19 @@ For a full-screen, app-like experience:
 - **Manual swap**: tap any slot → sub in a bench player or swap two positions, with live
   re-validation. **Regenerate** and **Lock plan** buttons. **Undo** (top bar) reverts the
   last change.
+- **Pitch view**: a portrait soccer-pitch diagram showing the 11 slots in their real 4-3-3
+  spatial shape (back four, DM deep, two AMs advanced, front three). Pick any sub window with
+  the chips; empty/at-risk slots are shown in dashed red. With **"Show next-window changes"**
+  on, it previews the coming substitutions right on the pitch — blue arrows for players
+  *moving position*, a red **OFF** badge for players *coming off*, and green dashed arrows +
+  an **ON … ▸ slot** strip for bench players *coming on* — so you can literally show a kid
+  "you're going here next." **Tap any player** to trace their slot across every window.
 - **Export text** (copyable) and **Print view** (print-friendly).
 
 ### Live tab
 - Big per-period **countdown timer**: start / pause / reset / next period.
+- **Pitch — where everyone is**: the same pitch diagram for the **current** window, with a
+  live preview of who moves/comes off/comes on at the **next** sub window.
 - Prominent **SUB CARD** listing the upcoming substitutions (who comes OFF ↔ who goes ON,
   with position) for the **next sub window** — not just at halftime. ~60s before each window
   it triggers **sound + vibration + an on-screen alert**, and beeps/vibrates again when the

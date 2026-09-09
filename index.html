@@ -125,6 +125,35 @@
   .seg button.on{background:var(--accent);color:#fff}
   .small{font-size:12px}
   .center{text-align:center}
+  /* pitch view */
+  .pitch{position:relative;width:100%;max-width:440px;margin:0 auto;aspect-ratio:2/3;
+    background:linear-gradient(#1a7a4d,#15683f);border:2px solid #0a3b28;border-radius:12px;overflow:hidden;touch-action:manipulation}
+  .pitch svg{position:absolute;inset:0;width:100%;height:100%}
+  .pitch svg.arrows{pointer-events:none;overflow:visible;z-index:1}
+  .tok{position:absolute;transform:translate(-50%,-50%);width:20%;min-width:70px;text-align:center;
+    background:#fff;border:2px solid #0d7a45;border-radius:10px;padding:3px 2px;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer;z-index:2}
+  .tok .pl{font-size:10px;font-weight:800;color:#0d7a45;line-height:1.1}
+  .tok .nm{font-size:12px;font-weight:700;color:var(--ink);line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tok .badges{display:flex;gap:2px;justify-content:center;flex-wrap:wrap;margin-top:1px}
+  .tok .foot{font-size:8px;font-weight:800;color:var(--muted);position:absolute;top:1px;right:3px}
+  .tok.empty{background:#ffdcdc;border-color:#c0392b;border-style:dashed}
+  .tok.empty .nm{color:#a01919}
+  .tok.leaving{border-color:var(--bad);box-shadow:0 0 0 3px rgba(192,57,43,.4)}
+  .tok.arriving{border-color:var(--accent);box-shadow:0 0 0 3px rgba(21,156,91,.45)}
+  .tok.moving{border-color:#2b7fb8;box-shadow:0 0 0 3px rgba(43,127,184,.45)}
+  .tok.dim{opacity:.32}
+  .tok.hl{outline:3px solid var(--sel-b);outline-offset:1px;z-index:4}
+  .tok .cap{font-size:9px;font-weight:800;margin-top:1px;border-radius:4px;padding:0 3px;display:inline-block}
+  .tok .cap.off{background:#ffe0e0;color:#a01919}
+  .tok .cap.on{background:#dff5e8;color:#0d7a45}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{border:1.5px solid var(--line);border-radius:20px;padding:6px 12px;font-size:13px;font-weight:700;background:#fff;color:var(--ink);cursor:pointer;min-height:40px;display:inline-flex;align-items:center;gap:3px}
+  .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .chip small{font-weight:600;opacity:.85}
+  .pitchlegend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:6px}
+  .arrivestrip{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;justify-content:center}
+  .arrivestrip .ac{font-size:12px;font-weight:700;border:1.5px solid var(--accent);color:var(--accent-d);border-radius:8px;padding:4px 8px;background:#f2fbf6}
+  .pathcap{margin-top:8px;font-size:12px;font-weight:600;color:var(--ink);background:var(--chip);border-radius:8px;padding:8px}
   @media print{
     header,.tabbar,.noprint{display:none!important}
     body{background:#fff;color:#000;font-size:12px}
@@ -224,6 +253,15 @@
       <div class="muted small" style="margin-top:8px">Tap a slot to substitute or swap. Columns are sub windows. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field.</div>
     </div>
     <div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">Pitch view</h2>
+        <label class="fld" style="flex-direction:row;align-items:center;gap:6px;color:var(--ink)"><input type="checkbox" id="pitchPreview" checked/> Show next-window changes</label>
+      </div>
+      <div id="pitchWindows" class="chips" style="margin-top:8px"></div>
+      <div id="planPitch" style="margin-top:10px"></div>
+      <div class="pitchlegend"><span><b style="color:#2b7fb8">→</b> moves position</span><span><b style="color:var(--bad)">●</b> coming off</span><span><b style="color:var(--accent-d)">●</b> coming on</span><span>Tap a player to trace their windows.</span></div>
+    </div>
+    <div class="panel">
       <h2>Minutes summary</h2>
       <div id="planSummary"></div>
     </div>
@@ -253,6 +291,15 @@
     </div>
 
     <div id="subCardWrap"></div>
+
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">Pitch — where everyone is</h2>
+        <span class="muted small" id="livePitchWhen"></span>
+      </div>
+      <div id="livePitch" style="margin-top:8px"></div>
+      <div class="pitchlegend"><span><b style="color:#2b7fb8">→</b> moves next window</span><span><b style="color:var(--bad)">●</b> comes off</span><span><b style="color:var(--accent-d)">●</b> comes on</span></div>
+    </div>
 
     <div class="panel">
       <div class="row" style="justify-content:space-between">
@@ -286,7 +333,7 @@
    ============================================================ */
 
 /* ---------- Constants ---------- */
-var POSITIONS = ['GK','RB','CB','LB','DM','CM','RW','ST','LW'];
+var POSITIONS = ['GK','RB','CB','LB','DM','AM','CM','RW','ST','LW'];
 var SLOTS = [
   {key:'GK', pos:'GK', label:'GK',     side:'C'},
   {key:'RB', pos:'RB', label:'RB',     side:'R'},
@@ -294,14 +341,20 @@ var SLOTS = [
   {key:'CBL',pos:'CB', label:'CB (L)', side:'L'},
   {key:'LB', pos:'LB', label:'LB',     side:'L'},
   {key:'DM', pos:'DM', label:'DM',     side:'C'},
-  {key:'CMR',pos:'CM', label:'CM (R)', side:'C'},
-  {key:'CML',pos:'CM', label:'CM (L)', side:'C'},
+  {key:'AMR',pos:'AM', label:'AM (R)', side:'C', accepts:['AM','CM']},
+  {key:'AML',pos:'AM', label:'AM (L)', side:'C', accepts:['AM','CM']},
   {key:'RW', pos:'RW', label:'RW',     side:'R'},
   {key:'ST', pos:'ST', label:'ST',     side:'C'},
   {key:'LW', pos:'LW', label:'LW',     side:'L'}
 ];
 var OUTFIELD_SLOTS = SLOTS.filter(function(s){return s.key!=='GK';});
 var SLOT_BY_KEY = {}; SLOTS.forEach(function(s){SLOT_BY_KEY[s.key]=s;});
+/* Pitch coordinates in a 100 x 150 portrait space (y=0 attack, y=150 own goal) */
+var PITCH = {
+  GK:{x:50,y:140}, RB:{x:84,y:113}, CBR:{x:61,y:115}, CBL:{x:39,y:115}, LB:{x:16,y:113},
+  DM:{x:50,y:90}, AMR:{x:64,y:66}, AML:{x:36,y:66},
+  RW:{x:82,y:36}, ST:{x:50,y:27}, LW:{x:18,y:36}
+};
 var BIG = 1e7;
 var WARN_SECONDS = 60; // sub warning before period end
 
@@ -330,11 +383,11 @@ var SEED = [
 
 /* ---------- State ---------- */
 var state = { players:[], games:[], currentGameId:null };
-var ui = { tab:'roster', selCell:null, editPlayerId:null };
+var ui = { tab:'roster', selCell:null, editPlayerId:null, pitchWin:0, pitchPreview:true, pitchHl:null };
 var undoStack = [];
 
 /* ---------- Storage ---------- */
-var LS_KEY = 'lineupManager.v2';
+var LS_KEY = 'lineupManager.v3';
 function uid(p){ return (p||'id')+Math.random().toString(36).slice(2,9); }
 function save(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
@@ -384,6 +437,17 @@ function doUndo(){
 /* ---------- Eligibility / cost ---------- */
 function eligRank(player, pos){ // 0 primary,1,2 ; -1 not eligible
   return player.positions.indexOf(pos);
+}
+// Rank against a SLOT, honoring accepted positions (e.g. an AM slot accepts CM).
+// Returns the best (lowest) rank across accepted positions, or -1 if none.
+function slotEligRank(player, slot){
+  var accepts = slot.accepts || [slot.pos];
+  var best=-1;
+  for(var i=0;i<accepts.length;i++){
+    var r=player.positions.indexOf(accepts[i]);
+    if(r>=0 && (best<0 || r<best)) best=r;
+  }
+  return best;
 }
 function footMismatch(player, slot){
   if(slot.side==='R' && player.foot==='L') return true;
@@ -565,7 +629,7 @@ function generatePlan(game, opts){
 }
 
 function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex){
-  var rank = eligRank(pl, slot.pos);
+  var rank = slotEligRank(pl, slot);
   if(rank<0) return BIG;
   var c = 0;
   c += rank*30;                         // prefer primary>secondary>tertiary
@@ -616,7 +680,7 @@ function computeFlags(game){
       var pid=seg.slots[s.key]; if(!pid) return;
       var pl=byId(pid); if(!pl) return;
       var f=[];
-      var rank=eligRank(pl,s.pos);
+      var rank=slotEligRank(pl,s);
       if(rank===1) f.push({t:'2',cls:'pos',title:'Secondary position'});
       else if(rank===2) f.push({t:'3',cls:'pos',title:'Tertiary position'});
       else if(rank<0) f.push({t:'✖',cls:'gk',title:'Not a listed position'});
@@ -895,6 +959,7 @@ function renderPlan(){
   host.innerHTML=''; host.appendChild(tbl);
 
   renderPlanSummary(g, stat);
+  renderPlanPitch(g);
 }
 function shortName(pl){ if(!pl) return '—'; var parts=pl.name.split(/\s+/); return parts[0] + (parts[1]? ' '+parts[1][0]:''); }
 
@@ -920,6 +985,168 @@ function renderPlanSummary(g, stat){
   host.innerHTML=''; host.appendChild(tbl);
 }
 
+/* ================= Pitch view (visual 4-3-3 map) ================= */
+function svgEl(tag, attrs){
+  var e=document.createElementNS('http://www.w3.org/2000/svg', tag);
+  if(attrs) for(var k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+// diff between two global segments: who moves slot, who leaves, who arrives
+function segTransition(g, giFrom, giTo){
+  var a=g.plan.segments[giFrom].slots, b=g.plan.segments[giTo].slots;
+  var aByPlayer={}, bByPlayer={};
+  SLOTS.forEach(function(s){ if(a[s.key]) aByPlayer[a[s.key]]=s.key; if(b[s.key]) bByPlayer[b[s.key]]=s.key; });
+  var moves={}, off={}, on={};
+  SLOTS.forEach(function(s){
+    var pa=a[s.key];
+    if(pa){
+      if(bByPlayer[pa]==null) off[s.key]=pa;
+      else if(bByPlayer[pa]!==s.key) moves[pa]={from:s.key, to:bByPlayer[pa]};
+    }
+    var pb=b[s.key];
+    if(pb && aByPlayer[pb]==null) on[s.key]=pb;
+  });
+  return { moves:moves, off:off, on:on, a:a, b:b };
+}
+// pitch line markings (100 x 150 portrait viewBox)
+function pitchLines(){
+  var svg=svgEl('svg',{viewBox:'0 0 100 150', class:'lines', preserveAspectRatio:'none'});
+  var st={fill:'none', stroke:'rgba(255,255,255,.55)', 'stroke-width':'0.7'};
+  function add(tag,a){ var e=svgEl(tag,a); for(var k in st) e.setAttribute(k, st[k]); svg.appendChild(e); }
+  add('rect',{x:3,y:3,width:94,height:144,rx:2});
+  add('line',{x1:3,y1:75,x2:97,y2:75});
+  add('circle',{cx:50,cy:75,r:11});
+  add('circle',{cx:50,cy:75,r:0.8, fill:'rgba(255,255,255,.55)'});
+  // own goal box (bottom)
+  add('rect',{x:24,y:126,width:52,height:21});
+  add('rect',{x:37,y:139,width:26,height:8});
+  // attack goal box (top)
+  add('rect',{x:24,y:3,width:52,height:21});
+  add('rect',{x:37,y:3,width:26,height:8});
+  return svg;
+}
+/* Build a pitch DOM node for global segment gi.
+   opts: { preview:bool, previewTo:int, highlightId:id|null, onToken:fn(id), flags:flagsMap } */
+function buildPitch(g, gi, opts){
+  opts=opts||{};
+  var wrap=el('div','pitchwrap');
+  var seg=g.plan.segments[gi]; if(!seg){ wrap.appendChild(el('div','muted','—')); return wrap; }
+  var flags=opts.flags||computeFlags(g);
+  var trans=null, giTo=-1;
+  if(opts.preview){
+    giTo = (opts.previewTo!=null)? opts.previewTo : gi+1;
+    if(giTo>=0 && giTo<g.plan.segments.length) trans=segTransition(g, gi, giTo); else trans=null;
+  }
+  var pitch=el('div','pitch');
+  pitch.appendChild(pitchLines());
+  // arrows overlay (drawn under tokens via z-index)
+  var arrows=svgEl('svg',{viewBox:'0 0 100 150', class:'arrows', preserveAspectRatio:'none'});
+  var defs=svgEl('defs');
+  ['#2b7fb8','#159c5b'].forEach(function(col,idx){
+    var mk=svgEl('marker',{id:'ah'+idx, viewBox:'0 0 10 10', refX:'8', refY:'5', markerWidth:'5', markerHeight:'5', orient:'auto-start-reverse'});
+    mk.appendChild(svgEl('path',{d:'M0,0 L10,5 L0,10 z', fill:col}));
+    defs.appendChild(mk);
+  });
+  arrows.appendChild(defs);
+  pitch.appendChild(arrows);
+
+  var hl=opts.highlightId||null;
+  SLOTS.forEach(function(s){
+    var c=PITCH[s.key]; if(!c) return;
+    var pid=seg.slots[s.key];
+    var tok=el('div','tok'+(pid?'':' empty'));
+    tok.style.left=c.x+'%'; tok.style.top=(c.y/1.5)+'%';
+    tok.appendChild(el('div','pl', s.label));
+    tok.appendChild(el('div','nm', pid? shortName(byId(pid)) : 'OPEN'));
+    if(pid){
+      var pl=byId(pid);
+      if(pl){ var ft=el('div','foot', pl.foot||''); tok.appendChild(ft); }
+      var fl=flags[gi+'|'+s.key];
+      if(fl){ var bw=el('div','badges'); fl.forEach(function(y){ var b=el('span','fl '+y.cls,y.t); b.title=y.title; bw.appendChild(b); }); tok.appendChild(bw); }
+      // preview states
+      if(trans){
+        if(trans.off[s.key]===pid){ tok.classList.add('leaving'); tok.appendChild(el('div','cap off','OFF ▸')); }
+        else if(trans.moves[pid]){ tok.classList.add('moving'); var to=SLOT_BY_KEY[trans.moves[pid].to]; tok.appendChild(el('div','cap on','▸ '+(to?to.label:''))); }
+      }
+      // highlight
+      if(hl){ if(pid===hl) tok.classList.add('hl'); else tok.classList.add('dim'); }
+      if(opts.onToken){ (function(id){ tok.onclick=function(){ opts.onToken(id); }; })(pid); }
+    }
+    pitch.appendChild(tok);
+  });
+
+  // draw arrows for moves + arrivals
+  if(trans){
+    for(var pid in trans.moves){
+      if(hl && pid!==hl) continue;
+      var mv=trans.moves[pid]; var f=PITCH[mv.from], t=PITCH[mv.to]; if(!f||!t) continue;
+      arrows.appendChild(svgEl('line',{x1:f.x,y1:f.y,x2:t.x,y2:t.y, stroke:'#2b7fb8','stroke-width':'1.4','stroke-linecap':'round','marker-end':'url(#ah0)'}));
+    }
+    for(var k in trans.on){
+      var pon=trans.on[k]; if(hl && pon!==hl) continue;
+      var d=PITCH[k]; if(!d) continue;
+      var sy=Math.min(150, d.y+17);
+      arrows.appendChild(svgEl('line',{x1:d.x,y1:sy,x2:d.x,y2:d.y+2, stroke:'#159c5b','stroke-width':'1.4','stroke-dasharray':'3,2','stroke-linecap':'round','marker-end':'url(#ah1)'}));
+    }
+  }
+  wrap.appendChild(pitch);
+
+  // arrivals strip (bench -> on) for clarity
+  if(trans){
+    var arrivals=Object.keys(trans.on);
+    if(arrivals.length){
+      var strip=el('div','arrivestrip');
+      arrivals.forEach(function(k){ var sl=SLOT_BY_KEY[k]; strip.appendChild(el('div','ac','ON '+shortName(byId(trans.on[k]))+' ▸ '+(sl?sl.label:k))); });
+      wrap.appendChild(strip);
+    }
+  }
+  return wrap;
+}
+// caption tracing a highlighted player's slot across every window
+function playerPathCaption(g, hlId){
+  if(!hlId) return null;
+  var info=segInfo(g.plan);
+  var parts=[];
+  info.forEach(function(x){
+    var seg=g.plan.segments[x.gi]; var slotKey=null;
+    for(var k in seg.slots){ if(seg.slots[k]===hlId){ slotKey=k; break; } }
+    var lab = slotKey? SLOT_BY_KEY[slotKey].label : 'Bench';
+    parts.push(periodName(g,x.period)+' '+x.startMin+"'–"+x.endMin+"': "+lab);
+  });
+  var cap=el('div','pathcap');
+  cap.appendChild(el('b',null, shortName(byId(hlId))+' — '));
+  cap.appendChild(document.createTextNode(parts.join('  ·  ')));
+  return cap;
+}
+
+function renderPlanPitch(g){
+  var chipsHost=document.getElementById('pitchWindows');
+  var host=document.getElementById('planPitch');
+  if(!chipsHost||!host) return;
+  chipsHost.innerHTML=''; host.innerHTML='';
+  if(!g || !g.plan || !g.plan.segments){ host.innerHTML='<div class="muted">No plan yet.</div>'; return; }
+  var info=segInfo(g.plan);
+  if(ui.pitchWin>=info.length) ui.pitchWin=0;
+  // window selector chips grouped by period
+  info.forEach(function(x){
+    var chip=el('button','chip'+(x.gi===ui.pitchWin?' on':''));
+    chip.innerHTML='';
+    chip.appendChild(document.createTextNode(periodName(g,x.period)));
+    var sm=el('small',null,' '+x.startMin+'–'+x.endMin+"'"); chip.appendChild(sm);
+    chip.onclick=function(){ ui.pitchWin=x.gi; renderPlanPitch(g); };
+    chipsHost.appendChild(chip);
+  });
+  var previewOn = ui.pitchPreview && (ui.pitchWin+1<info.length);
+  var pv=document.getElementById('pitchPreview'); if(pv) pv.checked=ui.pitchPreview;
+  var pitch=buildPitch(g, ui.pitchWin, {
+    preview: previewOn,
+    highlightId: ui.pitchHl,
+    onToken: function(id){ ui.pitchHl = (ui.pitchHl===id? null : id); renderPlanPitch(g); }
+  });
+  host.appendChild(pitch);
+  if(ui.pitchHl){ var cap=playerPathCaption(g, ui.pitchHl); if(cap) host.appendChild(cap); }
+}
+
 /* Cell tap -> substitution sheet */
 function onCellTap(si, slotKey){
   var g=currentGame();
@@ -943,7 +1170,7 @@ function onCellTap(si, slotKey){
     var c=el('div','choice');
     var av=el('div','avatar',initials(pl.name)); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
     var nm=el('div','grow'); nm.appendChild(el('div','',shortName(pl)));
-    var e=eligRank(pl,slot.pos); var note=(e<0?'out of position':(e===0?'primary':(e===1?'secondary':'tertiary')));
+    var e=slotEligRank(pl,slot); var note=(e<0?'out of position':(e===0?'primary':(e===1?'secondary':'tertiary')));
     if(footMismatch(pl,slot)) note+=' · wrong foot';
     nm.appendChild(el('div','muted small', note)); c.appendChild(nm);
     c.onclick=function(){ pushUndo(); doSub(si, slotKey, pl.id); closeSheet(); };
@@ -1017,8 +1244,23 @@ function renderLive(){
   }
   var gi=currentLiveSeg();
   renderLiveField(g, gi);
+  renderLivePitch(g, gi);
   renderLiveMinutes(g, gi);
   renderSubCard(g, gi);
+}
+
+function renderLivePitch(g, gi){
+  var host=document.getElementById('livePitch'); if(!host) return;
+  host.innerHTML='';
+  var when=document.getElementById('livePitchWhen');
+  if(!g.plan || !g.plan.segments[gi]){ host.innerHTML='<div class="muted">No plan.</div>'; if(when) when.textContent=''; return; }
+  var info=segInfo(g.plan)[gi];
+  var hasNext = gi+1<g.plan.segments.length && g.plan.segments[gi+1].period===g.plan.segments[gi].period;
+  // only preview arrivals/moves within the same period on the live map
+  var nextInfo = (gi+1<g.plan.segments.length)? segInfo(g.plan)[gi+1] : null;
+  if(when){ when.textContent = periodName(g, info.period)+' '+info.startMin+'–'+info.endMin+"'"+(hasNext&&nextInfo?(' → next '+nextInfo.startMin+"'"):''); }
+  var pitch=buildPitch(g, gi, { preview: (gi+1<g.plan.segments.length), previewTo: gi+1, highlightId:null });
+  host.appendChild(pitch);
 }
 
 function renderLiveField(g, gi){
@@ -1330,6 +1572,9 @@ function wire(){
   document.getElementById('resetBtn').onclick=resetTimer;
   document.getElementById('nextBtn').onclick=nextPeriod;
   document.getElementById('markOutBtn').onclick=openMarkOut;
+
+  var pv=document.getElementById('pitchPreview');
+  if(pv) pv.onchange=function(){ ui.pitchPreview=pv.checked; var g=currentGame(); if(g) renderPlanPitch(g); };
 }
 
 /* ---------- Boot ---------- */
@@ -1347,6 +1592,7 @@ window.__LM__ = {
   get state(){return state;},
   generatePlan:generatePlan, computeStats:computeStats, computeFlags:computeFlags,
   buildSegments:buildSegments, buildGkSchedule:buildGkSchedule,
+  segTransition:segTransition, slotEligRank:slotEligRank, PITCH:PITCH,
   SLOTS:SLOTS, byId:byId
 };
 </script>
