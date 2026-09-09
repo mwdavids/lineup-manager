@@ -53,12 +53,14 @@ For a full-screen, app-like experience:
 - Create and name a game day.
 - Set **periods (halves)**, **minutes per period**, and the **substitution interval** — the
   live total (e.g. **70 min**) updates as you type, and the sub windows per period are shown.
-- **Default: 2 × 35 min = 70 min, sub every 10 min.** One-tap **presets** for 70 min (2×35),
-  60 min (2×30), and 4×12.
+- **Default: 2 × 35 min = 70 min, quarter-based subs (~18-min windows).** The sub interval
+  seeds to half the period length (35 → 18), so each half is split in two — sub windows at the
+  quarter mark (~17–18') and at halftime — giving **4 roughly equal playing segments** across
+  the game. One-tap **presets** for 70 min (2×35), 60 min (2×30), and 4×12.
 - **Substitution interval / rolling subs:** rec soccer allows rolling subs, so instead of only
-  subbing at halftime the planner opens a sub window every N minutes *within* each half (a
-  35-min half at 10 min → windows of 10/10/10/5). This is what keeps minutes near-equal and
-  the keeper getting outfield time even with only two long halves.
+  subbing at halftime the planner opens a sub window every N minutes *within* each half (the
+  default 35-min half at 18 min → windows of 18/17). Lower it for more frequent rotation. This
+  is what keeps minutes near-equal and the keeper getting outfield time even with long halves.
 - Toggle each player available/unavailable **for that game**.
 - **Generate Plan** builds the lineup.
 - Saved games list: open, duplicate, or delete prior game days.
@@ -117,9 +119,10 @@ Priority order:
 
 Under the hood each **sub window** is solved as a minimum-cost assignment (Hungarian
 algorithm) over eligible players, so the result is deterministic and reproducible. A typical
-full-availability **70-minute (2×35) game with a 10-min sub interval** yields near-equal
-minutes (most players within a narrow band), a **50/50 GK split with both keepers getting
-outfield time**, and substitutions that are mostly bench↔field rather than on-field shuffles.
+full-availability **70-minute (2×35) game with the default quarter-based subs (~18-min
+windows)** yields near-equal minutes (most players within a narrow band), a **50/50 GK split
+with both keepers getting outfield time**, and substitutions that are mostly bench↔field
+rather than on-field shuffles.
 
 > **Roster-driven compromises are surfaced, not hidden.** A position only one or two players
 > can fill (e.g. an RB-only player) will naturally see tighter or looser minutes because

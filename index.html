@@ -202,16 +202,16 @@
           <input id="gameMinutes" type="number" min="1" max="60" value="35" inputmode="numeric" />
         </label>
         <label class="fld">Sub every (min)
-          <input id="gameSubInterval" type="number" min="1" max="60" value="10" inputmode="numeric" />
+          <input id="gameSubInterval" type="number" min="1" max="60" value="18" inputmode="numeric" />
         </label>
         <div class="grow"></div>
         <button class="btn sec sm" id="newGameBtn" style="align-self:flex-end">New blank game</button>
       </div>
       <div class="row" style="margin-top:8px">
         <span class="muted small">Presets:</span>
-        <button class="btn sec sm" data-preset="2,35,10">70 min (2×35)</button>
-        <button class="btn sec sm" data-preset="2,30,10">60 min (2×30)</button>
-        <button class="btn sec sm" data-preset="4,12,12">4×12</button>
+        <button class="btn sec sm" data-preset="2,35,18">70 min (2×35)</button>
+        <button class="btn sec sm" data-preset="2,30,15">60 min (2×30)</button>
+        <button class="btn sec sm" data-preset="4,12,6">4×12</button>
       </div>
       <div id="gameTotals" class="small" style="margin-top:10px;padding:10px;background:var(--chip);border-radius:10px;font-weight:600"></div>
     </div>
@@ -387,7 +387,7 @@ var ui = { tab:'roster', selCell:null, editPlayerId:null, pitchWin:0, pitchPrevi
 var undoStack = [];
 
 /* ---------- Storage ---------- */
-var LS_KEY = 'lineupManager.v3';
+var LS_KEY = 'lineupManager.v4';
 function uid(p){ return (p||'id')+Math.random().toString(36).slice(2,9); }
 function save(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
@@ -410,6 +410,7 @@ function load(){
 }
 
 /* ---------- Helpers ---------- */
+function defaultSub(min){ return Math.max(1, Math.round((min||35)/2)); } // quarter-based subs: split each period in two
 function byId(id){ for(var i=0;i<state.players.length;i++) if(state.players[i].id===id) return state.players[i]; return null; }
 function initials(name){
   var parts=name.replace(/\./g,'').trim().split(/\s+/);
@@ -833,7 +834,7 @@ function loadGameIntoSetup(){
   document.getElementById('gameName').value = g? (g.name||'') : '';
   document.getElementById('gamePeriods').value = g? g.periods : 2;
   document.getElementById('gameMinutes').value = g? g.minutes : 35;
-  document.getElementById('gameSubInterval').value = g? (g.subInterval||10) : 10;
+  document.getElementById('gameSubInterval').value = g? (g.subInterval||defaultSub(g.minutes)) : defaultSub(35);
   updateGameLabel(); renderGameTotals();
   renderAvailability(); renderSavedGames();
 }
@@ -866,7 +867,7 @@ function ensureGame(){
 }
 function newGame(){
   var avail={}; state.players.forEach(function(p){ avail[p.id]=true; });
-  var g={ id:uid('g'), name:'', date:Date.now(), periods:2, minutes:35, subInterval:10, availability:avail, plan:null, locked:false, live:{period:0} };
+  var g={ id:uid('g'), name:'', date:Date.now(), periods:2, minutes:35, subInterval:defaultSub(35), availability:avail, plan:null, locked:false, live:{period:0} };
   state.games.push(g); state.currentGameId=g.id; save();
   return g;
 }
