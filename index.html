@@ -409,7 +409,7 @@ var SEED = [
   ['Caroline G.','R',['RW']],
   ['Haley H.','R',['CB']],
   ['Isla K.','L',['CB','LB']],
-  ['Ava L.','R',['RB']],
+  ['Finn','R',['RB']],
   ['Violet M.','R',['DM']],
   ['Emily M.','R',['CM','CB']],
   ['Penelope T.','L',['LW']],
@@ -429,6 +429,17 @@ var undoStack = [];
 
 /* ---------- Storage ---------- */
 var LS_KEY = 'lineupManager.v4';
+var SEED_VERSION = 2; // bump when the seeded roster changes; migrations run in-place
+// One-time, non-destructive roster fixes applied to already-saved data. Keyed by
+// SEED_VERSION so they run once and keep player ids stable (saved games/pins that
+// reference players BY ID keep working).
+function migrateRoster(){
+  var from = state.seedVersion||1;
+  if(from<2){
+    (state.players||[]).forEach(function(pl){ if(pl.name==='Ava L.') pl.name='Finn'; });
+  }
+  state.seedVersion = SEED_VERSION;
+}
 function uid(p){ return (p||'id')+Math.random().toString(36).slice(2,9); }
 function save(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
@@ -441,10 +452,13 @@ function load(){
     try{ state=JSON.parse(raw); }catch(e){ raw=null; }
   }
   if(!raw || !state.players || !state.players.length){
-    state = { players:[], games:[], currentGameId:null };
+    state = { players:[], games:[], currentGameId:null, seedVersion:SEED_VERSION };
     SEED.forEach(function(s){
       state.players.push({ id:uid('p'), name:s[0], foot:s[1], positions:s[2].slice() });
     });
+    save();
+  } else {
+    migrateRoster();
     save();
   }
   if(!state.games) state.games=[];
