@@ -293,10 +293,13 @@ Priority order:
    the first window. **Fallbacks:** if only **one** GK-capable player is available, that
    keeper covers goal on a best-effort basis (no ineligible player is ever forced into goal);
    odd period counts generalize to a distinct keeper per period where possible. Pinned GK
-   cells are always honored and the half-blocks are built around them. *Note:* a field player
-   whose only listed position is contested (e.g. an RB-only player when several players list
-   RB) can still fall short of a half purely from position eligibility — that is a roster
-   constraint, independent of the GK rule.
+   cells are always honored and the half-blocks are built around them. *Note:* to protect
+   players who list only one contested position (e.g. an RB-only player when several players
+   list RB), the planner **reserves scarce slots for those least-flexible players** and nudges
+   more-flexible players toward their other positions, so captive players aren't crowded out
+   of the one slot they can play. In an extremely tight roster a captive player can still fall
+   short purely from position eligibility, but with the default roster every available player
+   reaches at least a half.
 4. **Footedness (soft):** prefers left-footers on LB/LW/left-CB and right-footers on the
    right.
 5. **Position stability (soft):** prefers a player keep the same position while on the
