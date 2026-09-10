@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Lineup" />
 <meta name="theme-color" content="#0b3d2e" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='47' fill='%23fff' stroke='%23111' stroke-width='4'/><g fill='%23111'><polygon points='50,34 65.2,45.1 59.4,62.9 40.6,62.9 34.8,45.1'/><polygon points='67,26.5 66.8,6.1 86.5,20.4'/><polygon points='77.6,59 96.9,52.5 89.4,75.6'/><polygon points='50,79 62.2,95.4 37.8,95.4'/><polygon points='22.4,59 10.6,75.6 3.1,52.5'/><polygon points='33,26.5 13.5,20.4 33.2,6.1'/></g><g stroke='%23111' stroke-width='3' stroke-linecap='round'><line x1='50' y1='34' x2='50' y2='7'/><line x1='65.2' y1='45.1' x2='90' y2='37'/><line x1='59.4' y1='62.9' x2='75' y2='84'/><line x1='40.6' y1='62.9' x2='25' y2='84'/><line x1='34.8' y1='45.1' x2='10' y2='37'/></g></svg>" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230b3d2e'/><g transform='translate(10,10) scale(0.8)'><circle cx='50' cy='50' r='47' fill='%23fff' stroke='%23111' stroke-width='4'/><g fill='%23111'><polygon points='50,34 65.2,45.1 59.4,62.9 40.6,62.9 34.8,45.1'/><polygon points='67,26.5 66.8,6.1 86.5,20.4'/><polygon points='77.6,59 96.9,52.5 89.4,75.6'/><polygon points='50,79 62.2,95.4 37.8,95.4'/><polygon points='22.4,59 10.6,75.6 3.1,52.5'/><polygon points='33,26.5 13.5,20.4 33.2,6.1'/></g><g stroke='%23111' stroke-width='3' stroke-linecap='round'><line x1='50' y1='34' x2='50' y2='7'/><line x1='65.2' y1='45.1' x2='90' y2='37'/><line x1='59.4' y1='62.9' x2='75' y2='84'/><line x1='40.6' y1='62.9' x2='25' y2='84'/><line x1='34.8' y1='45.1' x2='10' y2='37'/></g></g></svg>" />
 <title>Lineup Manager — U13 4-3-3</title>
 <style>
   :root{
@@ -102,6 +104,18 @@
   .listrow:last-child{border-bottom:none}
   .listrow .nm{font-weight:700;flex:1;min-width:120px}
   .avatar{width:38px;height:38px;border-radius:50%;background:var(--bg2);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex:0 0 auto}
+  /* compact per-player color chip (deterministic color from name; same everywhere) */
+  .pchip{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;min-width:22px;border-radius:50%;font-size:10px;font-weight:800;line-height:1;letter-spacing:.2px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);vertical-align:middle;flex:0 0 auto}
+  .sumtable .pchip,.livemin .pchip{width:20px;height:20px;min-width:20px;font-size:9px}
+  .tok .pchip{width:26px;height:26px;min-width:26px;font-size:11px;margin:1px auto}
+  .livename{display:inline-flex;align-items:center;gap:5px}
+  /* formation-line tints (subtle) */
+  .line-gk{background:rgba(240,185,40,.15)}
+  .line-def{background:rgba(46,120,200,.12)}
+  .line-mid{background:rgba(30,155,90,.12)}
+  .line-att{background:rgba(225,95,45,.12)}
+  .linekey{display:inline-flex;align-items:center;gap:4px}
+  .linedot{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
   .gamehdr{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
   .availgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
   .availcell{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:10px;padding:8px;min-height:var(--tap)}
@@ -113,18 +127,26 @@
   table.plan th{background:var(--chip);font-size:12px;position:sticky;left:0}
   table.plan thead th{position:sticky;top:0;z-index:2}
   table.plan td .cell{display:flex;flex-direction:column;gap:3px;min-height:40px;cursor:pointer;border-radius:6px;padding:2px}
-  table.plan td .cell .who{font-weight:700;font-size:13px}
+  table.plan td .cell .who{font-weight:700;font-size:13px;display:flex;align-items:center;gap:5px}
   table.plan td .cell.empty .who{color:var(--bad)}
+  table.plan td .cell.line-gk{box-shadow:inset 3px 0 0 #e6a91e}
+  table.plan td .cell.line-def{box-shadow:inset 3px 0 0 #2e78c8}
+  table.plan td .cell.line-mid{box-shadow:inset 3px 0 0 #1e9b5a}
+  table.plan td .cell.line-att{box-shadow:inset 3px 0 0 #e15f2d}
   table.plan td.sel .cell{background:var(--sel);outline:2px solid var(--sel-b)}
   table.plan td .cell{position:relative}
   table.plan td .cell.pinned{background:#fff7e6;outline:1.5px solid #e0a93a}
   .cell .pinmark{position:absolute;top:-2px;right:-2px;font-size:11px;line-height:1}
   .tok.pinned{outline:2px solid #e0a93a}
   .tok .tokpin{position:absolute;top:-6px;right:-6px;font-size:12px;line-height:1}
+  .tok.line-gk{border-top:4px solid #e6a91e}
+  .tok.line-def{border-top:4px solid #2e78c8}
+  .tok.line-mid{border-top:4px solid #1e9b5a}
+  .tok.line-att{border-top:4px solid #e15f2d}
   .slotlab{font-weight:800;font-size:12px;white-space:nowrap}
   .sumtable td,.sumtable th{border:1px solid var(--line);padding:6px;font-size:13px;text-align:center}
   .sumtable th{background:var(--chip)}
-  .sumtable td.nm{text-align:left;font-weight:700;white-space:nowrap}
+  .sumtable td.nm{text-align:left;font-weight:700;white-space:nowrap;display:flex;align-items:center;gap:6px}
   .bar{height:8px;background:#e7efe9;border-radius:5px;overflow:hidden}
   .bar>span{display:block;height:100%;background:var(--accent)}
   .bar>span.hot{background:var(--bad)}
@@ -378,6 +400,7 @@
     <div class="panel">
       <div class="plan-wrap"><div id="planGrid"></div></div>
       <div class="muted small" style="margin-top:8px">Tap a slot to substitute, swap, or 📌 pin. Columns are sub windows. <b>Pin XI</b> locks window 1; <b>Generate rest</b> fills the other windows around your pins. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field · <span title="pinned">📌</span> pinned. <button type="button" class="info" data-info="Foot badges: L = left-footed, R = right-footed. Flags — 2/3: playing a secondary/tertiary position · FT: wrong foot on a flank · GK: keeping goal too much · ↔: changed position on the field within the same half. On the pitch, OFF = coming off, ON = coming on, → = moving position.">ⓘ</button></div>
+      <div class="muted small" style="margin-top:6px">Lines: <span class="linekey"><span class="linedot" style="background:#e6a91e"></span> GK</span> &nbsp;<span class="linekey"><span class="linedot" style="background:#2e78c8"></span> Defense</span> &nbsp;<span class="linekey"><span class="linedot" style="background:#1e9b5a"></span> Midfield</span> &nbsp;<span class="linekey"><span class="linedot" style="background:#e15f2d"></span> Attack</span> · each colored circle is a player’s initials (same color everywhere).</div>
     </div>
     <div class="panel">
       <div class="row" style="justify-content:space-between;align-items:center">
@@ -565,6 +588,23 @@ function initials(name){
   if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
   return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
 }
+/* Deterministic per-player color from name (stable across every view). */
+function hashStr(s){ var h=2166136261>>>0; s=s||''; for(var i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+function hslToRgb(h,s,l){
+  var c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2, r=0,g=0,b=0;
+  if(h<60){r=c;g=x;} else if(h<120){r=x;g=c;} else if(h<180){g=c;b=x;}
+  else if(h<240){g=x;b=c;} else if(h<300){r=x;b=c;} else {r=c;b=x;}
+  return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];
+}
+function playerColor(name){
+  var h=hashStr(name)%360, rgb=hslToRgb(h,0.62,0.48);
+  var lum=(0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2])/255;
+  return { bg:'rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')', fg: lum>0.6?'#17241d':'#ffffff' };
+}
+function paintAvatar(elm,name){ var c=playerColor(name); elm.style.background=c.bg; elm.style.color=c.fg; if(name) elm.title=name; return elm; }
+/* compact color chip (span) for a player object */
+function pchip(pl,cls){ var e=el('span','pchip'+(cls?' '+cls:''), pl?initials(pl.name):'—'); if(pl) paintAvatar(e,pl.name); return e; }
+var LINE_OF={GK:'gk',RB:'def',CBR:'def',CBL:'def',LB:'def',DM:'mid',AMR:'mid',AML:'mid',RW:'att',ST:'att',LW:'att'};
 function currentGame(){ for(var i=0;i<state.games.length;i++) if(state.games[i].id===state.currentGameId) return state.games[i]; return null; }
 function toast(msg){
   var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
@@ -934,7 +974,7 @@ function renderRoster(){
   var host=document.getElementById('rosterList'); host.innerHTML='';
   state.players.forEach(function(pl){
     var row=el('div','listrow');
-    var av=el('div','avatar',initials(pl.name)); row.appendChild(av);
+    var av=el('div','avatar',initials(pl.name)); paintAvatar(av,pl.name); row.appendChild(av);
     var nm=el('div','nm'); nm.appendChild(document.createTextNode(pl.name));
     var pos=el('div','muted small'); pos.textContent=pl.positions.join(' · ');
     nm.appendChild(pos); row.appendChild(nm);
@@ -1013,7 +1053,7 @@ function renderAvailability(){
     var on = g.availability[pl.id]!==false;
     if(on) cnt++;
     var cell=el('div','availcell'+(on?'':' off'));
-    var av=el('div','avatar',initials(pl.name)); av.style.width='30px'; av.style.height='30px'; av.style.fontSize='12px';
+    var av=el('div','avatar',initials(pl.name)); paintAvatar(av,pl.name); av.style.width='30px'; av.style.height='30px'; av.style.fontSize='12px';
     cell.appendChild(av);
     var nm=el('div','nm',pl.name); cell.appendChild(nm);
     var cb=el('input'); cb.type='checkbox'; cb.checked=on;
@@ -1165,8 +1205,11 @@ function renderPlan(){
       (function(si){
         var td=el('td');
         var pid=g.plan.segments[si].slots[slot.key];
-        var cell=el('div','cell'+(pid?'':' empty')+(isPinned(g,si,slot.key)?' pinned':''));
-        cell.appendChild(el('div','who', pid? shortName(byId(pid)) : '—'));
+        var cell=el('div','cell'+(pid?'':' empty')+(isPinned(g,si,slot.key)?' pinned':'')+' line-'+LINE_OF[slot.key]);
+        var who=el('div','who');
+        if(pid){ who.appendChild(pchip(byId(pid))); who.appendChild(el('span','', shortName(byId(pid)))); }
+        else who.appendChild(el('span','','—'));
+        cell.appendChild(who);
         if(isPinned(g,si,slot.key)){ var pn=el('div','pinmark','📌'); pn.title='Pinned — kept when generating'; cell.appendChild(pn); }
         var fl=flags[si+'|'+slot.key];
         if(fl){ var fw=el('div','flags'); fl.forEach(function(y){ var b=el('span','fl '+y.cls,y.t); b.title=y.title; fw.appendChild(b); }); cell.appendChild(fw); }
@@ -1230,7 +1273,7 @@ function renderPlanSummary(g, stat){
   arr.forEach(function(s){
     var hot = totalGame>0 && s.min>=redThresh;
     var tr=el('tr');
-    tr.appendChild(el('td','nm', shortName(byId(s.id))));
+    var nmtd=el('td','nm'); nmtd.appendChild(pchip(byId(s.id))); nmtd.appendChild(el('span','', shortName(byId(s.id)))); tr.appendChild(nmtd);
     var tot=el('td', hot?'hot':'', s.min+"'"); if(hot) tot.title='≥75% of the '+totalGame+"' game"; tr.appendChild(tot);
     tr.appendChild(el('td','',s.field+"'"));
     tr.appendChild(el('td','',s.gk?(s.gk+"'"):'—'));
@@ -1271,18 +1314,23 @@ function segTransition(g, giFrom, giTo){
 // pitch line markings (100 x 150 portrait viewBox)
 function pitchLines(){
   var svg=svgEl('svg',{viewBox:'0 0 100 150', class:'lines', preserveAspectRatio:'none'});
+  // mowed stripes (drawn first so white lines sit on top)
+  for(var i=0;i<6;i++){ if(i%2===0) svg.appendChild(svgEl('rect',{x:3,y:3+i*24,width:94,height:24,fill:'rgba(255,255,255,.05)',stroke:'none'})); }
   var st={fill:'none', stroke:'rgba(255,255,255,.55)', 'stroke-width':'0.7'};
   function add(tag,a){ var e=svgEl(tag,a); for(var k in st) e.setAttribute(k, st[k]); svg.appendChild(e); }
+  function spot(cx,cy){ svg.appendChild(svgEl('circle',{cx:cx,cy:cy,r:0.9,fill:'rgba(255,255,255,.7)',stroke:'none'})); }
   add('rect',{x:3,y:3,width:94,height:144,rx:2});
   add('line',{x1:3,y1:75,x2:97,y2:75});
   add('circle',{cx:50,cy:75,r:11});
-  add('circle',{cx:50,cy:75,r:0.8, fill:'rgba(255,255,255,.55)'});
+  spot(50,75);
   // own goal box (bottom)
   add('rect',{x:24,y:126,width:52,height:21});
   add('rect',{x:37,y:139,width:26,height:8});
+  spot(50,133); add('path',{d:'M40.6,126 A11.7,11.7 0 0 0 59.4,126'});
   // attack goal box (top)
   add('rect',{x:24,y:3,width:52,height:21});
   add('rect',{x:37,y:3,width:26,height:8});
+  spot(50,17); add('path',{d:'M40.6,24 A11.7,11.7 0 0 1 59.4,24'});
   return svg;
 }
 /* Build a pitch DOM node for global segment gi.
@@ -1314,9 +1362,10 @@ function buildPitch(g, gi, opts){
   SLOTS.forEach(function(s){
     var c=PITCH[s.key]; if(!c) return;
     var pid=seg.slots[s.key];
-    var tok=el('div','tok'+(pid?'':' empty')+(isPinned(g,gi,s.key)?' pinned':''));
+    var tok=el('div','tok'+(pid?'':' empty')+(isPinned(g,gi,s.key)?' pinned':'')+(pid?(' line-'+LINE_OF[s.key]):''));
     tok.style.left=c.x+'%'; tok.style.top=(c.y/1.5)+'%';
     tok.appendChild(el('div','pl', s.label));
+    if(pid) tok.appendChild(pchip(byId(pid)));
     tok.appendChild(el('div','nm', pid? shortName(byId(pid)) : 'OPEN'));
     if(isPinned(g,gi,s.key)){ var pnt=el('div','tokpin','📌'); pnt.title='Pinned'; tok.appendChild(pnt); }
     if(pid){
@@ -1390,7 +1439,8 @@ function playerPathCaption(g, hlId){
 
   var cap=el('div','pathcap');
   var head=el('div','pc-head');
-  head.appendChild(el('b',null, shortName(pl)));
+  head.appendChild(pchip(pl));
+  head.appendChild(el('b',null, ' '+shortName(pl)));
   head.appendChild(document.createTextNode(' — '+posStr+foot+' · '+totalMin+"' ("+onWins.length+' of '+totalWin+' windows) · '+benchTxt+'.'));
   cap.appendChild(head);
 
@@ -1491,7 +1541,7 @@ function onCellTap(si, slotKey){
   if(!benchIds.length) sheet.appendChild(el('div','muted small','No bench players this window.'));
   benchIds.map(byId).sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(pl){
     var c=el('div','choice');
-    var av=el('div','avatar',initials(pl.name)); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
+    var av=el('div','avatar',initials(pl.name)); paintAvatar(av,pl.name); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
     var nm=el('div','grow'); nm.appendChild(el('div','',shortName(pl)));
     var e=slotEligRank(pl,slot); var note=(e<0?'out of position':(e===0?'primary':(e===1?'secondary':'tertiary')));
     if(footMismatch(pl,slot)) note+=' · wrong foot';
@@ -1595,9 +1645,11 @@ function renderLiveField(g, gi){
   var wrap=el('div','livemin');
   SLOTS.forEach(function(s){
     var pid=ap[s.key];
-    var m=el('div','m');
+    var m=el('div','m'+(pid?(' line-'+LINE_OF[s.key]):''));
     m.appendChild(el('span','', s.label));
-    m.appendChild(el('span','', pid? shortName(byId(pid)) : '—'));
+    var rt=el('span','livename');
+    if(pid){ rt.appendChild(pchip(byId(pid))); rt.appendChild(el('span','', shortName(byId(pid)))); } else rt.appendChild(el('span','','—'));
+    m.appendChild(rt);
     wrap.appendChild(m);
   });
   host.appendChild(wrap);
@@ -1616,7 +1668,7 @@ function renderLiveMinutes(g, gi){
   arr.sort(function(a,b){return b.min-a.min;});
   arr.forEach(function(s){
     var m=el('div','m');
-    m.appendChild(el('span','', shortName(byId(s.id))));
+    var lft=el('span','livename'); lft.appendChild(pchip(byId(s.id))); lft.appendChild(el('span','', shortName(byId(s.id)))); m.appendChild(lft);
     m.appendChild(el('span','', s.min+"'"+(s.gk?(' · GK '+s.gk+"'"):'')));
     host.appendChild(m);
   });
@@ -1647,9 +1699,9 @@ function renderSubCard(g, gi){
   subs.forEach(function(c){
     var r=el('div','subrow');
     r.appendChild(el('span','pill',c.slot));
-    if(c.off){ var o=el('span','off','OFF '+shortName(byId(c.off))); r.appendChild(o); }
+    if(c.off){ r.appendChild(pchip(byId(c.off))); var o=el('span','off','OFF '+shortName(byId(c.off))); r.appendChild(o); }
     r.appendChild(el('span','','→'));
-    if(c.on){ var on=el('span','on','ON '+shortName(byId(c.on))); r.appendChild(on); }
+    if(c.on){ r.appendChild(pchip(byId(c.on))); var on=el('span','on','ON '+shortName(byId(c.on))); r.appendChild(on); }
     if(!c.off) r.appendChild(el('span','muted','(new)'));
     if(!c.on) r.appendChild(el('span','muted','(empty)'));
     card.appendChild(r);
@@ -1746,7 +1798,7 @@ function openMarkOut(){
   var availPlayers = state.players.filter(function(p){return g.availability[p.id]!==false;});
   availPlayers.sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(pl){
     var c=el('div','choice');
-    var av=el('div','avatar',initials(pl.name)); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
+    var av=el('div','avatar',initials(pl.name)); paintAvatar(av,pl.name); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
     c.appendChild(el('div','grow', pl.name));
     c.onclick=function(){
       if(!confirm('Mark '+pl.name+' OUT and re-plan the rest of the game?')) return;
