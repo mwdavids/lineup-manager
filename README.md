@@ -83,6 +83,8 @@ clear message instead of corrupting your data.
 
 ## Feature overview
 
+> **Not sure what a button does?** Tap the small **ⓘ** next to it for a one-line explanation (works by tap on the iPad and by hover on a computer). Tap elsewhere or press Esc to dismiss.
+
 ### Roster tab
 - Pre-seeded with the 19 players (foot L/R + primary/secondary/tertiary positions).
 - Add, edit, or remove players and change their foot and positions at any time.

@@ -63,6 +63,25 @@
   button.btn.bad{background:var(--bad)}
   button.btn.sm{min-height:44px;padding:0 12px;font-size:14px}
   button.btn.ghost{background:transparent;color:var(--accent-d);border:1.5px solid var(--accent)}
+  /* Info (ⓘ) help affordance — works on touch (tap) and desktop (hover/focus) */
+  .info{
+    appearance:none;-webkit-appearance:none;font:inherit;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;position:relative;
+    width:27px;height:27px;min-width:27px;padding:0;margin:0;border-radius:999px;
+    background:var(--chip);color:var(--accent-d);border:1.5px solid var(--line);
+    font-size:15px;font-weight:800;font-style:normal;line-height:1;vertical-align:middle;
+  }
+  .info:active{transform:translateY(1px)}
+  .info:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .info::after{content:"";position:absolute;inset:-9px}  /* expand touch target to ~44px */
+  .fld .info{width:22px;height:22px;min-width:22px;font-size:13px}
+  #infoPop{
+    position:fixed;z-index:60;max-width:min(280px,calc(100vw - 24px));
+    background:#12211b;color:#f3f7f4;border-radius:10px;padding:9px 12px;
+    font-size:13.5px;line-height:1.42;font-weight:500;box-shadow:0 8px 26px rgba(0,0,0,.32);
+    pointer-events:none;opacity:0;transform:translateY(-3px);transition:opacity .1s ease,transform .1s ease;
+  }
+  #infoPop.show{opacity:1;transform:none}
   .muted{color:var(--muted)}
   .pill{display:inline-block;background:var(--chip);border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700}
   .pill.L{background:#e7f0ff;color:#1c4e9c}
@@ -225,7 +244,10 @@
           <input id="gameMinutes" type="number" min="1" max="60" value="35" inputmode="numeric" />
         </label>
         <label class="fld">Sub every (min)
-          <input id="gameSubInterval" type="number" min="1" max="60" value="18" inputmode="numeric" />
+          <span style="display:inline-flex;align-items:center;gap:6px">
+            <input id="gameSubInterval" type="number" min="1" max="60" value="18" inputmode="numeric" />
+            <button type="button" class="info" data-info="How often to substitute within each half. Lower = more even minutes; higher = fewer changes. Default splits each half in two (quarters).">ⓘ</button>
+          </span>
         </label>
         <div class="grow"></div>
         <button class="btn sec sm" id="newGameBtn" style="align-self:flex-end">New blank game</button>
@@ -263,12 +285,17 @@
       <div class="muted small" style="margin-bottom:10px">Make a lineup on your computer, open it on your iPad — no account, no server. Share links keep all data in the link itself (after the <b>#</b>), so nothing is uploaded.</div>
       <div class="row">
         <button class="btn sec sm" id="shareGameBtn2">🔗 Share this game</button>
+        <button type="button" class="info" data-info="Makes a link with this game’s plan + settings to open on another device. Everything is in the link (after the #); nothing is uploaded.">ⓘ</button>
         <button class="btn sec sm" id="shareRosterBtn">🔗 Share roster</button>
+        <button type="button" class="info" data-info="Makes a link with just your player list (names, feet, positions) to copy your roster to another device — no specific game attached.">ⓘ</button>
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn sec sm" id="exportDataBtn">⬇️ Export data (.json)</button>
+        <button type="button" class="info" data-info="Downloads a .json backup of everything — roster, all saved games, and settings.">ⓘ</button>
         <button class="btn sec sm" id="copyBackupBtn">🧾 Copy backup code</button>
+        <button type="button" class="info" data-info="Copies that same full backup as a text code you can paste into Import on another device.">ⓘ</button>
         <button class="btn sec sm" id="importDataBtn">⬆️ Import data</button>
+        <button type="button" class="info" data-info="Loads a backup from a .json file or pasted code. Adds saved games and asks before replacing your roster.">ⓘ</button>
       </div>
       <input type="file" id="importFileInput" accept=".json,application/json" class="hidden" />
     </div>
@@ -282,15 +309,19 @@
         <span class="pill" id="lockPill" style="display:none">🔒 Locked</span>
         <div class="grow"></div>
         <button class="btn sec sm" id="pinXiBtn">📌 Pin XI</button>
+        <button type="button" class="info" data-info="Locks the current Window-1 lineup as your starting XI so “Generate rest” won’t change it.">ⓘ</button>
         <button class="btn sec sm" id="genRestBtn">▶️ Generate rest</button>
+        <button type="button" class="info" data-info="Auto-fills the remaining sub windows around your pinned cells, balancing minutes, GK time, and positions.">ⓘ</button>
         <button class="btn sec sm" id="regenBtn">Regenerate</button>
+        <button type="button" class="info" data-info="Rebuilds the ENTIRE plan from scratch — clears all pins and manual edits.">ⓘ</button>
         <button class="btn sm" id="lockBtn">Lock plan</button>
+        <button type="button" class="info" data-info="Freezes the whole plan so it won’t be regenerated or auto-changed.">ⓘ</button>
       </div>
       <div class="muted small" id="planMeta"></div>
     </div>
     <div class="panel">
       <div class="plan-wrap"><div id="planGrid"></div></div>
-      <div class="muted small" style="margin-top:8px">Tap a slot to substitute, swap, or 📌 pin. Columns are sub windows. <b>Pin XI</b> locks window 1; <b>Generate rest</b> fills the other windows around your pins. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field · <span title="pinned">📌</span> pinned.</div>
+      <div class="muted small" style="margin-top:8px">Tap a slot to substitute, swap, or 📌 pin. Columns are sub windows. <b>Pin XI</b> locks window 1; <b>Generate rest</b> fills the other windows around your pins. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field · <span title="pinned">📌</span> pinned. <button type="button" class="info" data-info="Foot badges: L = left-footed, R = right-footed. Flags — 2/3: playing a secondary/tertiary position · FT: wrong foot on a flank · GK: keeping goal too much · ↔: changed position on the field within the same half. On the pitch, OFF = coming off, ON = coming on, → = moving position.">ⓘ</button></div>
     </div>
     <div class="panel">
       <div class="row" style="justify-content:space-between;align-items:center">
@@ -308,6 +339,7 @@
     <div class="panel noprint">
       <div class="row">
         <button class="btn sec sm" id="shareGameBtn">🔗 Share game link</button>
+        <button type="button" class="info" data-info="Copies a link containing this whole game (plan, pins, and settings) — text or AirDrop it to your iPad to open the exact same plan. All data lives in the link; nothing is uploaded.">ⓘ</button>
         <button class="btn sec sm" id="exportBtn">📋 Export text</button>
         <button class="btn sec sm" id="printBtn">🖨️ Print view</button>
         <button class="btn sec sm" id="dupBtn">⧉ Duplicate game</button>
@@ -345,7 +377,10 @@
     <div class="panel">
       <div class="row" style="justify-content:space-between">
         <h2 style="margin:0">On field now</h2>
-        <button class="btn bad sm" id="markOutBtn">＋ Mark player OUT</button>
+        <span style="display:inline-flex;align-items:center;gap:6px">
+          <button class="btn bad sm" id="markOutBtn">＋ Mark player OUT</button>
+          <button type="button" class="info" data-info="Remove a player mid-game (injury or left early) and auto-replan the remaining windows around who’s left.">ⓘ</button>
+        </span>
       </div>
       <div id="liveField" style="margin-top:8px"></div>
     </div>
@@ -821,6 +856,8 @@ function computeFlags(game){
    RENDERING
    ============================================================ */
 function el(tag,cls,txt){ var e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e; }
+// Small ⓘ help button (works on touch via tap, desktop via hover/focus). See initInfo().
+function infoIcon(text){ var b=el('button','info','ⓘ'); b.type='button'; b.setAttribute('data-info',text); b.setAttribute('aria-label','Help: '+text); return b; }
 
 /* ----- Roster ----- */
 function renderRoster(){
@@ -1360,7 +1397,7 @@ function onCellTap(si, slotKey){
   // Pin / Unpin this cell (a subset lock the generator respects)
   var pinned=isPinned(g,si,slotKey);
   var pinBtn=el('button','btn '+(pinned?'':'sec')+' sm', pinned? '📌 Unpin this cell' : '📌 Pin this cell');
-  pinBtn.style.width='100%'; pinBtn.style.marginBottom='4px';
+  pinBtn.style.flex='1'; pinBtn.style.marginBottom='4px';
   if(!curId && !pinned){ pinBtn.disabled=true; pinBtn.classList.add('ghost'); pinBtn.textContent='📌 Pin (fill the cell first)'; }
   pinBtn.onclick=function(){
     pushUndo();
@@ -1369,7 +1406,10 @@ function onCellTap(si, slotKey){
     save(); renderPlan(); renderLive(); closeSheet();
     toast(pinned?'Unpinned':'Pinned');
   };
-  sheet.appendChild(pinBtn);
+  var pinRow=el('div','row'); pinRow.style.flexWrap='nowrap'; pinRow.style.marginBottom='0';
+  pinRow.appendChild(pinBtn);
+  pinRow.appendChild(infoIcon('Pin this one assignment so auto-generate keeps it fixed.'));
+  sheet.appendChild(pinRow);
   sheet.appendChild(el('div','muted small','Pinned cells are kept when you tap “Generate rest”.')).style.marginBottom='6px';
 
   // Who is on field this segment
@@ -2069,11 +2109,58 @@ function wire(){
   if(pv) pv.onchange=function(){ ui.pitchPreview=pv.checked; var g=currentGame(); if(g) renderPlanPitch(g); };
 }
 
+/* ---------- Info popover (ⓘ help) — touch tap + desktop hover/focus ---------- */
+function initInfo(){
+  if(document.getElementById('infoPop')) return;
+  var pop=document.createElement('div');
+  pop.id='infoPop'; pop.setAttribute('role','tooltip'); pop.setAttribute('aria-hidden','true');
+  document.body.appendChild(pop);
+  var pinnedEl=null;   // element that tap-opened the popover (sticky until dismissed)
+
+  function anchorOf(e){ return (e.target && e.target.closest) ? e.target.closest('.info,[data-info]') : null; }
+  function place(a){
+    pop.classList.add('show');
+    var r=a.getBoundingClientRect(), m=8, vw=window.innerWidth, vh=window.innerHeight;
+    var pw=pop.offsetWidth, ph=pop.offsetHeight;
+    var left=r.left + r.width/2 - pw/2;
+    left=Math.max(m, Math.min(left, vw-pw-m));
+    var top=r.bottom+8;
+    if(top+ph > vh-m) top=r.top-ph-8;      // flip above if it would overflow the bottom
+    if(top<m) top=m;
+    pop.style.left=Math.round(left)+'px';
+    pop.style.top=Math.round(top)+'px';
+  }
+  function show(a){ var t=a.getAttribute('data-info'); if(!t) return; pop.textContent=t; pop.setAttribute('aria-hidden','false'); place(a); }
+  function hide(){ pop.classList.remove('show'); pop.setAttribute('aria-hidden','true'); pinnedEl=null; }
+
+  // Capture-phase click: toggles the popover and stops the tap from reaching the
+  // underlying control (e.g. slot tap-to-edit) so the ⓘ never triggers an edit.
+  document.addEventListener('click', function(e){
+    var a=anchorOf(e);
+    if(a){ e.preventDefault(); e.stopPropagation(); if(pinnedEl===a){ hide(); } else { pinnedEl=a; show(a); } }
+    else if(pinnedEl){ hide(); }
+  }, true);
+  // Desktop hover (only when not tap-pinned)
+  document.addEventListener('mouseover', function(e){ var a=anchorOf(e); if(a && !pinnedEl) show(a); });
+  document.addEventListener('mouseout', function(e){ var a=anchorOf(e); if(a && !pinnedEl) hide(); });
+  // Keyboard focus
+  document.addEventListener('focusin', function(e){ var a=anchorOf(e); if(a) show(a); });
+  document.addEventListener('focusout', function(e){ var a=anchorOf(e); if(a && pinnedEl!==a) hide(); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') hide(); });
+  window.addEventListener('scroll', function(){ if(pop.classList.contains('show')) hide(); }, true);
+  window.addEventListener('resize', hide);
+  // Give static ⓘ buttons proper roles/labels if authored without them
+  Array.prototype.forEach.call(document.querySelectorAll('.info[data-info]'), function(b){
+    if(!b.getAttribute('aria-label')) b.setAttribute('aria-label','Help: '+b.getAttribute('data-info'));
+  });
+}
+
 /* ---------- Boot ---------- */
 function boot(){
   load();
   if(!currentGame() && state.games.length) state.currentGameId=state.games[state.games.length-1].id;
   wire();
+  initInfo();
   renderAll();
   switchTab('roster');
   try{ if(checkHashImport()) return; }catch(e){}
