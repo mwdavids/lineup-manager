@@ -5,6 +5,12 @@ fixed **4-3-3** from an iPad on the sideline. Everything lives in one `index.htm
 CSS + vanilla JavaScript, **no build step, no server, no network requests**. All data is
 stored locally in your browser via `localStorage`.
 
+> **Canonical app URL:** **https://happy-field-051df6c0f.5.azurestaticapps.net** (Azure Static
+> Web Apps — includes optional [cloud sync](#cloud-sync-azure--optional)).
+> The old GitHub Pages address **https://mwdavids.github.io/lineup-manager/ is deprecated** and
+> now just redirects here — please update your bookmarks / Home Screen icon. The app still runs
+> fully offline and can be self-hosted from a single `index.html` as described below.
+
 The midfield three is a single **Defensive Mid (DM)** at the base with **two Attacking Mids
 (AM)** ahead of it — so the slots are GK · RB · CB · CB · LB · **DM · AM · AM** · RW · ST · LW.
 Players whose listed positions include **CM are automatically eligible for the AM slots**, so
@@ -169,7 +175,9 @@ When it finishes it prints the **Static Web App URL** (e.g.
    with your other devices and the other coach; connect each one the same way.
 
 If you host the plain app on GitHub Pages but deployed the backend to Azure, use the advanced
-**Server URL** field to point the GitHub-Pages copy at your Static Web App origin.
+**Server URL** field to point that copy at your Static Web App origin. (Note: the project's own
+GitHub Pages URL is now **deprecated** and redirects to the Azure app — see the canonical URL
+note at the top.)
 
 ## Feature overview
 
