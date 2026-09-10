@@ -279,19 +279,24 @@ Priority order:
 2. **Equal field time:** minimizes the spread of total minutes across *available* players;
    each game stands alone (no carryover). Rolling sub windows are what make this work with
    long halves.
-3. **GK relief (whole-half blocks):** with two eligible keepers available it prefers giving
-   each keeper **one contiguous half in goal and the other half outfield** — e.g. keeper A
-   plays goal all of the first half and takes an eligible field slot in the second, while
-   keeper B does the reverse. With equal halves this naturally yields a **~50/50 GK split**
-   as clean half-blocks rather than per-window alternation, and guarantees each keeper at
-   least one outfield window so nobody is goal-only. This preference is **soft** and ranks
-   *below* the guarantee that every available player gets at least one half of playing time —
-   it never benches someone to protect a keeper's block. Each keeper's goal time is factored
-   into the fairness balance from the first window so keepers aren't over- or under-played.
-   **Fallbacks:** if only **one** GK-capable player is available, that keeper covers goal on a
-   best-effort split (no ineligible player is ever forced into goal); odd period counts
-   generalize to a distinct keeper per period where possible. Pinned GK cells are always
-   honored and the half-blocks are built around them.
+3. **GK relief (whole-half blocks, full off-half outfield):** with two eligible keepers
+   available it gives each keeper **one contiguous half in goal and their *entire* other
+   half outfield** — keeper A plays goal all of the first half and takes an eligible field
+   slot in **every** window of the second half, while keeper B does the reverse. With equal
+   halves this yields a clean **~50/50 GK split** and, by design, **≈ full-game minutes for
+   both keepers** (one half in goal + one half on the field). This is intended so neither
+   keeper is goal-only and both stay involved. The preference is **soft** and ranks *below*
+   the hard guarantee that every other available player gets at least one half of playing
+   time: if the roster is tight enough that a keeper's full off-half would push a field
+   player below a half, the half guarantee wins and the keeper gets as close to a full
+   off-half as possible. Each keeper's goal time is factored into the fairness balance from
+   the first window. **Fallbacks:** if only **one** GK-capable player is available, that
+   keeper covers goal on a best-effort basis (no ineligible player is ever forced into goal);
+   odd period counts generalize to a distinct keeper per period where possible. Pinned GK
+   cells are always honored and the half-blocks are built around them. *Note:* a field player
+   whose only listed position is contested (e.g. an RB-only player when several players list
+   RB) can still fall short of a half purely from position eligibility — that is a roster
+   constraint, independent of the GK rule.
 4. **Footedness (soft):** prefers left-footers on LB/LW/left-CB and right-footers on the
    right.
 5. **Position stability (soft):** prefers a player keep the same position while on the
@@ -309,9 +314,10 @@ rather than failing.
 Under the hood each **sub window** is solved as a minimum-cost assignment (Hungarian
 algorithm) over eligible players, so the result is deterministic and reproducible. A typical
 full-availability **70-minute (2×35) game with the default quarter-based subs (~18-min
-windows)** yields near-equal minutes (most players within a narrow band), a **50/50 GK split
-with both keepers getting outfield time**, and substitutions that are mostly bench↔field
-rather than on-field shuffles.
+windows)** yields near-equal minutes for the field players (most within a narrow band), a
+**50/50 GK split with each keeper playing one half in goal and their full other half
+outfield (≈ full-game minutes for the two keepers)**, and substitutions that are mostly
+bench↔field rather than on-field shuffles.
 
 > **Roster-driven compromises are surfaced, not hidden.** A position only one or two players
 > can fill (e.g. an RB-only player) will naturally see tighter or looser minutes because

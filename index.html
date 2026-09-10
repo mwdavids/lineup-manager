@@ -803,12 +803,33 @@ function generatePlan(game, opts){
   }
 
   function loadOf(id){ return (fldMin[id]||0)*10 + (gkScheduledTotal[id]||0)*10*GK_FAIR; }
-  // Outfield guarantee: a player who tends goal in some OTHER period must get at
-  // least one field window in a period they are not keeping, so no keeper is ever
-  // goal-only. Strong (but not absolute) pull toward giving them that first window.
-  function keeperInsurance(pl, curGkId){
-    if((gkScheduledTotal[pl.id]||0)>0 && pl.id!==curGkId && (fldMin[pl.id]||0)===0) return -8000;
+  // Suffix sum of window minutes: suffixMin[i] = minutes available from segment i to end.
+  var suffixMin=new Array(segMeta.length+1).fill(0);
+  for(var qi=segMeta.length-1; qi>=0; qi--) suffixMin[qi]=suffixMin[qi+1]+segMeta[qi].dur;
+  var halfThreshold=(game.periods*game.minutes)/2;   // "one half" of total game time
+
+  // Keeper off-half rule: each scheduled keeper should play their ENTIRE off-half
+  // outfield — a real eligible field slot for EVERY window of the half they are not
+  // in goal (≈ full-game minutes for the keepers, which is intended). Strong pull so
+  // they are seated outfield every off-duty window; only applies where they are
+  // actually eligible (the cellCost<BIG gate) so a GK-only keeper is never forced
+  // into an ineligible slot.
+  function keeperOffHalfPull(pl, curGkId){
+    if((gkScheduledTotal[pl.id]||0)>0 && pl.id!==curGkId) return -8000;
     return 0;
+  }
+  // Everyone-gets-a-half guarantee (HARD, ranks ABOVE the keeper off-half pull):
+  // an available outfield player who would otherwise drop below one half of playing
+  // time must be seated now. Keepers already earn a half in goal, so they are exempt.
+  function halfGuaranteePull(pl, si){
+    if((gkScheduledTotal[pl.id]||0)>0) return 0;      // keeper: guaranteed a half in goal
+    var pm=(fldMin[pl.id]||0);
+    if(pm>=halfThreshold-1e-6) return 0;              // already has a half
+    var afterThis=suffixMin[si+1]||0;                 // minutes still available AFTER this window
+    if(pm+afterThis < halfThreshold-1e-6) return -20000; // skipping now => can't reach a half (HARD)
+    return -6000;                                     // still below a half but can catch up:
+                                                      // prioritize over normal fairness, but stay
+                                                      // below the keeper off-half pull (-8000)
   }
 
   var segments=[];
@@ -843,7 +864,7 @@ function generatePlan(game, opts){
         var slot=openSlots[ri-1];
         for(var ci=1;ci<=m;ci++){
           var cc=cellCost(candidates[ci-1], slot, si, loadOf, prev, ci, prevSamePeriod);
-          if(cc<BIG) cc+=keeperInsurance(candidates[ci-1], gkId);
+          if(cc<BIG) cc+=keeperOffHalfPull(candidates[ci-1], gkId)+halfGuaranteePull(candidates[ci-1], si);
           cost[ri][ci]=cc;
         }
       }
@@ -859,7 +880,7 @@ function generatePlan(game, opts){
         var best=-1,bestc=BIG;
         for(var q=0;q<pool.length;q++){
           var c=cellCost(pool[q],slot,si,loadOf,prev,q+1,prevSamePeriod);
-          if(c<BIG) c+=keeperInsurance(pool[q], gkId);
+          if(c<BIG) c+=keeperOffHalfPull(pool[q], gkId)+halfGuaranteePull(pool[q], si);
           if(c<bestc){bestc=c;best=q;}
         }
         if(best>=0 && bestc<BIG){ assign[slot.key]=pool[best].id; pool.splice(best,1);} 
