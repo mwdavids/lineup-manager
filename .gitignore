@@ -1,0 +1,14 @@
+# Node / test artifacts (root only — api/package.json IS committed)
+/node_modules/
+/package.json
+/package-lock.json
+/synctest.js
+
+# azd
+.azure/
+
+# Azurite (local storage emulator)
+api/.azurite/
+__blobstorage__/
+__queuestorage__/
+__azurite_db*.json

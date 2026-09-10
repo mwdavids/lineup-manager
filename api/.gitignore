@@ -1,0 +1,7 @@
+node_modules/
+local.settings.json
+bin/
+obj/
+__azurite_db*.json
+__blobstorage__/
+__queuestorage__/

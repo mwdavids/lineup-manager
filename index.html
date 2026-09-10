@@ -86,6 +86,11 @@
   .pill{display:inline-block;background:var(--chip);border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700}
   .pill.L{background:#e7f0ff;color:#1c4e9c}
   .pill.R{background:#fdeee2;color:#9c561c}
+  .pill.s-off{background:#e5e7eb;color:#4b5563}
+  .pill.s-synced{background:#dcfce7;color:#166534}
+  .pill.s-syncing{background:#fef9c3;color:#854d0e}
+  .pill.s-offline{background:#ffedd5;color:#9a3412}
+  .pill.s-conflict,.pill.s-error{background:#fee2e2;color:#991b1b}
   .flags{display:inline-flex;gap:3px;flex-wrap:wrap}
   .fl{font-size:10px;font-weight:800;border-radius:5px;padding:1px 4px;line-height:1.3}
   .fl.pos{background:#fff2cf;color:#8a5a00}
@@ -299,6 +304,42 @@
       </div>
       <input type="file" id="importFileInput" accept=".json,application/json" class="hidden" />
     </div>
+
+    <div class="panel noprint">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">Team sync (cloud) <span id="syncPill" class="pill s-off">Not connected</span></h2>
+        <button type="button" class="info" data-info="Optional. Connect a Team ID + shared passcode to keep this device in sync with other coaches over the internet. Leave it off to stay fully local — the app works exactly the same offline.">ⓘ</button>
+      </div>
+      <div class="muted small" style="margin:6px 0 10px">Optional cloud sync so you, another coach, and your iPad share the same roster + games. The app still works fully offline on the sideline; changes upload when you’re back online. Needs the app opened from your team’s synced site (or set a Server URL below).</div>
+      <div id="syncDisconnected">
+        <div class="row">
+          <label class="fld grow">Team ID
+            <input id="syncTeam" placeholder="e.g. thunder-u13" autocapitalize="none" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="fld grow">Passcode
+            <input id="syncPass" type="password" placeholder="shared team passcode" autocomplete="off" />
+          </label>
+        </div>
+        <details style="margin-top:6px">
+          <summary class="muted small" style="cursor:pointer">Advanced: server URL</summary>
+          <label class="fld grow" style="margin-top:6px">Server URL (leave blank when the app is opened from your team’s synced site)
+            <input id="syncEndpoint" placeholder="https://your-app.azurestaticapps.net" autocapitalize="none" autocomplete="off" spellcheck="false" />
+          </label>
+        </details>
+        <div class="row" style="margin-top:8px">
+          <button class="btn grow" id="syncConnectBtn">🔗 Connect team</button>
+          <button type="button" class="info" data-info="Joins the team: the first device to connect sets the shared passcode; others must match it. On connect, your local roster + games merge with the team’s.">ⓘ</button>
+        </div>
+      </div>
+      <div id="syncConnected" class="hidden">
+        <div class="small" id="syncInfoLine" style="margin-bottom:8px"></div>
+        <div class="row">
+          <button class="btn sec sm" id="syncNowBtn">🔄 Sync now</button>
+          <button class="btn bad sm" id="syncDisconnectBtn">Disconnect</button>
+          <button type="button" class="info" data-info="Sync now pushes your changes and pulls others’ right away. Disconnect stops syncing on this device but keeps all your data locally.">ⓘ</button>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- PLAN -->
@@ -479,6 +520,7 @@ function uid(p){ return (p||'id')+Math.random().toString(36).slice(2,9); }
 function save(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
   catch(e){ toast('Save failed: storage full?'); }
+  try{ if(typeof Sync!=='undefined' && Sync.connected && !Sync._applying) Sync.onLocalChange(); }catch(e){}
 }
 function load(){
   var raw=null;
@@ -2155,12 +2197,252 @@ function initInfo(){
   });
 }
 
+/* ============================================================
+   TEAM SYNC (optional cloud sync via Azure Functions API)
+   Offline-first: everything works with no team connected. When connected,
+   the whole app state is the team's document; concurrency is version-based.
+   ============================================================ */
+var LS_SYNC = 'lineupManager.sync.v1';
+var Sync = {
+  teamId:null, passcode:null, endpoint:'', baseVersion:0,
+  connected:false, status:'off', dirty:false, busy:false,
+  lastSyncAt:0, lastError:'', _applying:false, _pushT:null, _pollT:null
+};
+
+function syncOnline(){ try{ return navigator.onLine!==false; }catch(e){ return true; } }
+function syncEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+function syncLoadConfig(){
+  try{
+    var raw=localStorage.getItem(LS_SYNC);
+    if(!raw) return;
+    var c=JSON.parse(raw);
+    Sync.teamId=c.teamId||null; Sync.passcode=c.passcode||null;
+    Sync.endpoint=c.endpoint||''; Sync.baseVersion=c.baseVersion||0;
+    Sync.connected=!!(c.teamId&&c.passcode);
+  }catch(e){}
+}
+function syncSaveConfig(){
+  try{
+    if(!Sync.connected){ localStorage.removeItem(LS_SYNC); return; }
+    localStorage.setItem(LS_SYNC, JSON.stringify({
+      teamId:Sync.teamId, passcode:Sync.passcode, endpoint:Sync.endpoint, baseVersion:Sync.baseVersion
+    }));
+  }catch(e){}
+}
+function syncApiBase(){
+  var e=(Sync.endpoint||'').trim().replace(/\/+$/,'');
+  if(e){ return /\/api$/i.test(e) ? e : (e+'/api'); }
+  var o=location.origin;
+  if(o && o!=='null') return o+'/api';
+  return '/api';
+}
+function syncData(){ return _clone(state); }   // the team document = full local state
+// Apply a server document into local state without triggering an immediate re-push.
+function syncApply(data){
+  if(!data) return;
+  Sync._applying=true;
+  try{
+    state.players = (data.players||[]).map(_clone);
+    state.games = (data.games||[]).map(_clone);
+    state.currentGameId = data.currentGameId || (state.games.length? state.games[state.games.length-1].id : null);
+    if(data.seedVersion) state.seedVersion=data.seedVersion;
+    if(!currentGame() && state.games.length) state.currentGameId=state.games[state.games.length-1].id;
+    save();
+    renderAll(); loadGameIntoSetup();
+  } finally { Sync._applying=false; }
+}
+// First-connect union merge: keep local, add the team's missing players (by name)
+// and any games we don't have (by id), remapping their player ids to our roster
+// so references stay valid even though seeded ids differ per device.
+function syncMergeIn(data){
+  if(!data) return;
+  var map=reconcilePlayers(data.players||[]);   // add missing by name; shared id -> local id
+  var have={}; state.games.forEach(function(g){ have[g.id]=1; });
+  (data.games||[]).forEach(function(sg){
+    if(have[sg.id]) return;
+    var cp=remapGameIds(_clone(sg), map); cp.name=dedupeGameName(cp.name||'Game');
+    state.games.push(cp); have[cp.id]=1;
+  });
+}
+
+function syncSetStatus(s, msg){
+  Sync.status=s; Sync.lastError=msg||'';
+  renderSyncUI();
+}
+function timeAgo(ms){
+  if(!ms) return '';
+  var s=Math.max(0,Math.round((Date.now()-ms)/1000));
+  if(s<5) return 'just now';
+  if(s<60) return s+'s ago';
+  var m=Math.round(s/60); if(m<60) return m+' min ago';
+  var h=Math.round(m/60); return h+'h ago';
+}
+function renderSyncUI(){
+  var pill=document.getElementById('syncPill'); if(!pill) return;
+  var label={off:'Not connected',synced:'Synced',syncing:'Syncing…',offline:'Offline',conflict:'Conflict',error:'Error'}[Sync.status]||'—';
+  pill.className='pill s-'+Sync.status;
+  pill.textContent = (Sync.status==='synced' && Sync.lastSyncAt) ? ('Synced · '+timeAgo(Sync.lastSyncAt)) : label;
+  var dis=document.getElementById('syncDisconnected'), con=document.getElementById('syncConnected');
+  if(dis&&con){ dis.classList.toggle('hidden', Sync.connected); con.classList.toggle('hidden', !Sync.connected); }
+  var line=document.getElementById('syncInfoLine');
+  if(line && Sync.connected){
+    var extra = Sync.status==='offline' ? ' · offline — will sync when back online'
+      : Sync.status==='conflict' ? ' · conflict — choose keep/take on next change'
+      : Sync.status==='error' && Sync.lastError ? (' · '+Sync.lastError)
+      : Sync.dirty ? ' · unsynced changes' : (Sync.lastSyncAt?(' · synced '+timeAgo(Sync.lastSyncAt)):'');
+    line.innerHTML='Team <b>'+syncEsc(Sync.teamId)+'</b> · v'+Sync.baseVersion+syncEsc(extra);
+  }
+}
+
+async function syncFetch(path, opts){
+  opts=opts||{};
+  var headers=Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+  var res=await fetch(syncApiBase()+path, {method:opts.method||'GET', headers:headers, body:opts.body?JSON.stringify(opts.body):undefined});
+  var data=null; try{ data=await res.json(); }catch(e){}
+  return {status:res.status, data:data};
+}
+
+async function syncConnect(teamId, passcode, endpoint){
+  teamId=(teamId||'').trim().toLowerCase();
+  if(!/^[a-z0-9][a-z0-9_-]{1,48}$/.test(teamId)){ toast('Team ID: 2–48 letters, numbers, dashes'); return false; }
+  if((passcode||'').length<4){ toast('Passcode must be at least 4 characters'); return false; }
+  Sync.endpoint=(endpoint||'').trim();
+  syncSetStatus('syncing');
+  var r;
+  try{ r=await syncFetch('/join',{method:'POST',body:{teamId:teamId,passcode:passcode}}); }
+  catch(e){ syncSetStatus('error','Could not reach the server. Check the URL / connection.'); toast('Could not reach sync server'); return false; }
+  if(r.status===401){ syncSetStatus('off'); toast('Wrong team passcode'); return false; }
+  if(r.status===429){ syncSetStatus('off'); toast('Too many attempts — wait a few minutes'); return false; }
+  if(r.status!==200 || !r.data){ syncSetStatus('off'); toast((r.data&&r.data.message)||'Could not connect'); return false; }
+
+  Sync.teamId=teamId; Sync.passcode=passcode; Sync.connected=true;
+  if(r.data.data){
+    // Team already has data — merge it into local, then push the union up.
+    var doMerge = (typeof confirm!=='function') ? true : confirm('This team already has saved data.\n\nOK = merge it with what’s on this device (recommended).\nCancel = keep only this device’s data and overwrite the team.');
+    if(doMerge) syncMergeIn(r.data.data);
+    Sync.baseVersion=r.data.version;
+  } else {
+    Sync.baseVersion=r.data.version||1;
+  }
+  syncSaveConfig();
+  Sync.dirty=true;                 // push our (merged) state to establish the shared doc
+  syncSetStatus('syncing');
+  await syncPush();
+  syncStartPoll();
+  toast('Team connected');
+  return true;
+}
+
+function syncDisconnect(){
+  syncStopPoll();
+  if(Sync._pushT){ clearTimeout(Sync._pushT); Sync._pushT=null; }
+  Sync.connected=false; Sync.teamId=null; Sync.passcode=null; Sync.baseVersion=0; Sync.dirty=false;
+  syncSaveConfig();
+  syncSetStatus('off');
+  toast('Disconnected — your data stays on this device');
+}
+
+function syncHeaders(){ return {'x-team-pass': Sync.passcode||''}; }
+
+function syncOnLocalChange(){
+  Sync.dirty=true;
+  if(Sync.status==='synced') syncSetStatus('synced'); // refresh "unsynced changes"
+  renderSyncUI();
+  if(Sync._pushT) clearTimeout(Sync._pushT);
+  Sync._pushT=setTimeout(function(){ Sync._pushT=null; syncPush(); }, 1500);
+}
+Sync.onLocalChange=syncOnLocalChange;
+
+async function syncPush(){
+  if(!Sync.connected || Sync.busy) return;
+  if(!syncOnline()){ syncSetStatus('offline'); return; }
+  Sync.busy=true; if(Sync.status!=='conflict') syncSetStatus('syncing');
+  try{
+    var r=await syncFetch('/team',{method:'PUT',headers:syncHeaders(),body:{teamId:Sync.teamId, data:syncData(), baseVersion:Sync.baseVersion}});
+    if(r.status===200){ Sync.baseVersion=r.data.version; Sync.dirty=false; Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSetStatus('synced'); }
+    else if(r.status===409){ Sync.busy=false; return syncResolveConflict(r.data); }
+    else if(r.status===401){ syncSetStatus('error','Passcode no longer valid'); }
+    else if(r.status===404){ // team blob missing (deleted) — re-establish by pushing as new base
+      syncSetStatus('error','Team not found on server'); }
+    else { syncSetStatus('error',(r.data&&r.data.message)||('Server error '+r.status)); }
+  }catch(e){ syncSetStatus('offline'); }
+  finally{ Sync.busy=false; }
+}
+
+async function syncPull(){
+  if(!Sync.connected || Sync.busy) return;
+  if(!syncOnline()){ syncSetStatus('offline'); return; }
+  Sync.busy=true;
+  try{
+    var r=await syncFetch('/team?teamId='+encodeURIComponent(Sync.teamId),{method:'GET',headers:syncHeaders()});
+    if(r.status===200){
+      if(r.data.version===Sync.baseVersion){
+        if(Sync.status==='offline'||Sync.status==='syncing') syncSetStatus(Sync.dirty?'syncing':'synced');
+        Sync.busy=false; if(Sync.dirty){ return syncPush(); } return;
+      }
+      // Server advanced.
+      if(Sync.dirty){ Sync.busy=false; return syncResolveConflict(r.data); }   // local + server both changed
+      syncApply(r.data.data); Sync.baseVersion=r.data.version; Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSetStatus('synced');
+    } else if(r.status===401){ syncSetStatus('error','Wrong passcode'); }
+    else if(r.status===404){ syncSetStatus('error','Team not found'); }
+    else { syncSetStatus('error','Server error '+r.status); }
+  }catch(e){ syncSetStatus('offline'); }
+  finally{ Sync.busy=false; }
+}
+
+function syncResolveConflict(serverPayload){
+  syncSetStatus('conflict');
+  var ago = serverPayload && serverPayload.updatedAt ? timeAgo(Date.parse(serverPayload.updatedAt)) : 'recently';
+  var keepMine = (typeof confirm!=='function') ? false :
+    confirm('Another coach updated this team '+ago+'.\n\nOK = Keep MINE (overwrite the team with this device).\nCancel = Take THEIRS (replace this device with the team’s latest).');
+  if(keepMine){
+    Sync.baseVersion = serverPayload.version;   // rebase onto latest, then force our data up
+    Sync.dirty=true; return syncPush();
+  } else {
+    syncApply(serverPayload.data); Sync.baseVersion=serverPayload.version; Sync.dirty=false; Sync.lastSyncAt=Date.now();
+    syncSaveConfig(); syncSetStatus('synced'); toast('Took the team’s latest');
+  }
+}
+
+function syncStartPoll(){
+  syncStopPoll();
+  Sync._pollT=setInterval(function(){
+    if(!Sync.connected) return;
+    if(!syncOnline()){ syncSetStatus('offline'); return; }
+    if(Sync.dirty) syncPush(); else syncPull();
+  }, 20000);
+}
+function syncStopPoll(){ if(Sync._pollT){ clearInterval(Sync._pollT); Sync._pollT=null; } }
+
+function initSync(){
+  syncLoadConfig();
+  renderSyncUI();
+  var cb=document.getElementById('syncConnectBtn');
+  if(cb) cb.onclick=function(){
+    syncConnect(document.getElementById('syncTeam').value, document.getElementById('syncPass').value, document.getElementById('syncEndpoint').value);
+  };
+  var db=document.getElementById('syncDisconnectBtn'); if(db) db.onclick=syncDisconnect;
+  var nb=document.getElementById('syncNowBtn'); if(nb) nb.onclick=function(){ if(Sync.dirty) syncPush(); else syncPull(); };
+  window.addEventListener('online', function(){ if(Sync.connected){ if(Sync.dirty) syncPush(); else syncPull(); } });
+  window.addEventListener('offline', function(){ if(Sync.connected) syncSetStatus('offline'); });
+  if(Sync.connected){
+    var t=document.getElementById('syncTeam'); if(t) t.value=Sync.teamId||'';
+    var e=document.getElementById('syncEndpoint'); if(e) e.value=Sync.endpoint||'';
+    syncSetStatus(syncOnline()?'syncing':'offline');
+    syncPull();          // pull others' changes on open
+    syncStartPoll();
+  }
+  // keep the "x ago" label fresh
+  setInterval(function(){ if(Sync.connected && (Sync.status==='synced')) renderSyncUI(); }, 15000);
+}
+
 /* ---------- Boot ---------- */
 function boot(){
   load();
   if(!currentGame() && state.games.length) state.currentGameId=state.games[state.games.length-1].id;
   wire();
   initInfo();
+  initSync();
   renderAll();
   switchTab('roster');
   try{ if(checkHashImport()) return; }catch(e){}
@@ -2179,7 +2461,8 @@ window.__LM__ = {
   encodePayload:encodePayload, decodePayload:decodePayload,
   makeGamePayload:makeGamePayload, makeRosterPayload:makeRosterPayload, makeFullPayload:makeFullPayload,
   shareUrl:shareUrl, routeImport:routeImport, checkHashImport:checkHashImport,
-  parseImportText:parseImportText, currentGame:currentGame, save:save
+  parseImportText:parseImportText, currentGame:currentGame, save:save,
+  Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase
 };
 </script>
 </body>

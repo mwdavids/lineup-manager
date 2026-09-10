@@ -81,6 +81,75 @@ On **Game Setup → Sync between devices**:
 Payloads are **versioned**, so older links keep working; anything unrecognized fails with a
 clear message instead of corrupting your data.
 
+## Cloud sync (Azure) — optional
+
+The Share link and Export/Import above are the zero-setup way to move a plan between your own
+devices. If you want changes made by one coach to **show up automatically** for other coaches
+and on other devices (computer ↔ iPad ↔ head coach), you can deploy the optional cloud sync
+backend and connect the app to a shared **team passcode**.
+
+**This is entirely opt-in.** With no team connected the app behaves exactly as before —
+everything lives in `localStorage`, works on the sideline with no signal, and never talks to a
+server. Cloud sync just adds an online copy that the app pushes to and pulls from when it can.
+
+### How it works
+
+- A tiny **Azure Functions API** (`/api`, Node.js) stores each team's full app state (roster +
+  all game days + settings) as one JSON document in **Azure Blob Storage**, guarded by a
+  **shared team passcode**. The passcode is **hashed (SHA-256 + salt) server-side** and never
+  stored in plaintext or sent back to the browser; the storage keys stay in the Functions app
+  settings and are never shipped to the client.
+- The frontend is served by **Azure Static Web Apps (Free)** with the Functions wired in as its
+  managed API. Concurrency uses a version number + ETag: if two coaches edit at once, the
+  second save gets a **conflict prompt** ("keep mine / take theirs") instead of silently losing
+  data.
+- The app **auto-pushes** your changes (debounced) and **auto-pulls** on open and every ~20s
+  while online. Offline changes are **queued and flushed on reconnect**.
+
+### Deploy it (one command, on your personal Azure subscription)
+
+The app has kids' names in it, so deploy to a **personal** subscription. You need the
+[Azure Developer CLI (`azd`)](https://aka.ms/azd-install) — on Windows: `winget install Microsoft.Azd`.
+
+```sh
+# 1. Sign in with your PERSONAL account (opens a browser)
+azd auth login
+
+# 2. Create an environment and point it at your personal subscription
+azd env new lineup-manager
+azd env set AZURE_SUBSCRIPTION_ID <your-personal-subscription-id>
+azd env set AZURE_LOCATION eastus2
+
+# 3. Provision + deploy everything (Static Web App + Functions + Storage)
+azd up
+```
+
+Confirm the selected subscription shows your **personal** account (e.g. "Visual Studio
+Enterprise"), **not** a corporate one, before continuing. When `azd up` finishes it prints the
+**Static Web App URL** — that's the synced version of the app. Cost is **~$0**: Static Web Apps
+Free tier + a few KB of blob storage (covered by Visual Studio credits).
+
+> **Fallback deploy:** if you'd rather not use `azd`, you can deploy with the SWA CLI:
+> `swa deploy --app-location . --api-location api --deployment-token <token>` (get the token
+> from the Static Web App's *Manage deployment token* in the Azure portal), after creating the
+> Static Web App + Storage account and setting `AZURE_STORAGE_CONNECTION_STRING` in the API's
+> configuration.
+
+### Connect a team
+
+1. Open the deployed Static Web App URL.
+2. Go to **Game Setup → Team sync (cloud)**, enter a **Team name/ID** and a **passcode**, and
+   tap **Connect**.
+3. The **first** device to connect a given team ID **sets** the passcode; everyone else must
+   enter the same passcode to join (wrong passcode is rejected). On connect, the app merges the
+   server's data with your local roster/games (asking before replacing your roster), reusing
+   the same name-based merge as Share/Import.
+4. The status pill shows **Synced / Syncing / Offline / Conflict**. Share the team ID + passcode
+   with your other devices and the other coach; connect each one the same way.
+
+If you host the plain app on GitHub Pages but deployed the backend to Azure, use the advanced
+**Server URL** field to point the GitHub-Pages copy at your Static Web App origin.
+
 ## Feature overview
 
 > **Not sure what a button does?** Tap the small **ⓘ** next to it for a one-line explanation (works by tap on the iPad and by hover on a computer). Tap elsewhere or press Esc to dismiss.
@@ -200,5 +269,7 @@ rather than on-field shuffles.
 
 ## Out of scope
 
-No hosting/cloud/multi-device sync, no season-long carryover, no other formations or
-smaller-sided games, and no score/foul/stat tracking beyond playing minutes.
+No season-long carryover, no other formations or smaller-sided games, and no score/foul/stat
+tracking beyond playing minutes. (Multi-device cloud sync is available as the optional,
+opt-in [Cloud sync](#cloud-sync-azure--optional) feature above; the app is fully usable
+offline without it.)

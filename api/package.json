@@ -1,0 +1,10 @@
+{
+  "name": "lineup-manager-api",
+  "version": "1.0.0",
+  "description": "Team-sync API for the Lineup Manager app (Azure Static Web Apps managed functions).",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@azure/storage-blob": "^12.17.0"
+  }
+}
