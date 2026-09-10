@@ -127,6 +127,22 @@ clear message instead of corrupting your data.
 - **Export text** (copyable) and **Print view** (print-friendly), plus **🔗 Share game link**
   to send the whole game (plan + pitch map) to another device.
 
+### Set your starting lineup (pins) 📌
+Want a specific starting XI (or a few fixed choices) and let the app build the rest around it?
+- **Pin the starting XI:** arrange window 1 how you like (tap slots to sub players in), then
+  tap **📌 Pin XI** to lock all 11 window-1 assignments at once.
+- **Pin/unpin any single cell:** tap a slot on the Plan grid and use **📌 Pin / Unpin** in the
+  slot sheet. Pinned cells show a small 📌 on both the grid and the pitch map. You can pin
+  cells in *any* window, not just the first.
+- **Generate rest (keep pinned):** builds every *unpinned* cell around your pins, honouring all
+  planner rules. Crucially, **pinned minutes count toward fairness** — start a normally-benched
+  player and she gets fewer of the remaining windows; start your keeper outfield and the ~50/50
+  GK balance is recomputed across the other windows so both keepers still tend goal evenly.
+- **Regenerate** still wipes *everything* (it warns first if you have pins) and re-plans from
+  scratch. **Lock plan** is separate — it freezes the whole plan; pins are just a partial lock
+  that *Generate rest* respects.
+- Pins are saved with the game and travel inside **Share links** and **Export** backups.
+
 ### Live tab
 - Big per-period **countdown timer**: start / pause / reset / next period.
 - **Pitch — where everyone is**: the same pitch diagram for the **current** window, with a
@@ -157,6 +173,12 @@ Priority order:
 5. **Position stability (soft):** prefers a player keep the same position while on the
    field, with position changes normally requiring a bench rest — but the planner *may*
    move an on-field player when it clearly improves fairness/coverage, and flags it.
+
+**Pinned cells** (see *Set your starting lineup* above) are treated as **hard constraints**:
+the optimizer leaves them exactly as-is and solves only the unpinned cells, with the pinned
+players' minutes already counted in the fairness and GK balance. If your pins make a perfect
+solution impossible, it fills what it can and surfaces the trade-off via the usual flags
+rather than failing.
 
 Under the hood each **sub window** is solved as a minimum-cost assignment (Hungarian
 algorithm) over eligible players, so the result is deterministic and reproducible. A typical

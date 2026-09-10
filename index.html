@@ -92,6 +92,11 @@
   table.plan td .cell .who{font-weight:700;font-size:13px}
   table.plan td .cell.empty .who{color:var(--bad)}
   table.plan td.sel .cell{background:var(--sel);outline:2px solid var(--sel-b)}
+  table.plan td .cell{position:relative}
+  table.plan td .cell.pinned{background:#fff7e6;outline:1.5px solid #e0a93a}
+  .cell .pinmark{position:absolute;top:-2px;right:-2px;font-size:11px;line-height:1}
+  .tok.pinned{outline:2px solid #e0a93a}
+  .tok .tokpin{position:absolute;top:-6px;right:-6px;font-size:12px;line-height:1}
   .slotlab{font-weight:800;font-size:12px;white-space:nowrap}
   .sumtable td,.sumtable th{border:1px solid var(--line);padding:6px;font-size:13px;text-align:center}
   .sumtable th{background:var(--chip)}
@@ -276,6 +281,8 @@
         <h2 style="margin:0" id="planTitle">Plan</h2>
         <span class="pill" id="lockPill" style="display:none">🔒 Locked</span>
         <div class="grow"></div>
+        <button class="btn sec sm" id="pinXiBtn">📌 Pin XI</button>
+        <button class="btn sec sm" id="genRestBtn">▶️ Generate rest</button>
         <button class="btn sec sm" id="regenBtn">Regenerate</button>
         <button class="btn sm" id="lockBtn">Lock plan</button>
       </div>
@@ -283,7 +290,7 @@
     </div>
     <div class="panel">
       <div class="plan-wrap"><div id="planGrid"></div></div>
-      <div class="muted small" style="margin-top:8px">Tap a slot to substitute or swap. Columns are sub windows. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field.</div>
+      <div class="muted small" style="margin-top:8px">Tap a slot to substitute, swap, or 📌 pin. Columns are sub windows. <b>Pin XI</b> locks window 1; <b>Generate rest</b> fills the other windows around your pins. Flags: <span class="fl pos">2/3</span> out of position · <span class="fl foot">FT</span> wrong foot on flank · <span class="fl gk">GK</span> keeper-heavy · <span class="fl move">↔</span> moved on field · <span title="pinned">📌</span> pinned.</div>
     </div>
     <div class="panel">
       <div class="row" style="justify-content:space-between;align-items:center">
@@ -583,10 +590,59 @@ function generatePlan(game, opts){
   var fromSeg = opts.fromSegment||0;
   var gkSched = buildGkSchedule(avail, game.periods); // one keeper per period (stable within a half)
 
-  // total GK minutes each player is scheduled to tend goal across the whole game
+  // ---- Pins: individual cell assignments the coach has locked. Treated as HARD
+  // constraints; the optimizer only fills the UNPINNED cells. Pinned minutes are
+  // pre-counted into the fairness load so pinned players get correspondingly
+  // fewer of the remaining windows (totals still even out). ----
+  var pins = game.pins||{};
+  function pinAt(si, key){ var id=pins[si+'|'+key]; if(id && byId(id) && game.availability[id]!==false) return id; return null; }
+  function pinnedOutfield(si){ var o={}; OUTFIELD_SLOTS.forEach(function(sl){ var pid=pinAt(si,sl.key); if(pid) o[pid]=true; }); return o; }
+
+  // Effective GK per segment, chosen window-by-window so GK minutes stay ~50/50
+  // even when a keeper is pinned into an outfield slot (or into goal) somewhere.
+  // Rules per segment: a pinned GK wins; else keep the SAME keeper as the previous
+  // window of this half (stability) if still eligible; else seed the least-used
+  // eligible keeper, breaking ties toward the per-period schedule so a no-pin game
+  // reproduces the old stable-halves / perfect-50/50 behaviour exactly.
+  var gkForSeg=new Array(segMeta.length).fill(null);
+  var gkAcc={};                       // GK minutes handed out so far (schedule + pins)
+  var schedRank={};                   // keeper -> period they're scheduled for (tiebreak)
+  for(var sp=0; sp<gkSched.length; sp++){ if(gkSched[sp]!=null && schedRank[gkSched[sp]]===undefined) schedRank[gkSched[sp]]=sp; }
+  var allKeepers = avail.filter(function(pl){ return pl.positions.indexOf('GK')>=0; });
+  for(var gsi=0; gsi<segMeta.length; gsi++){
+    var gdur=segMeta[gsi].dur;
+    if(gsi<fromSeg && opts.fixedSegments && opts.fixedSegments[gsi]){
+      var fk=opts.fixedSegments[gsi].slots['GK']||null; gkForSeg[gsi]=fk; if(fk) gkAcc[fk]=(gkAcc[fk]||0)+gdur; continue;
+    }
+    var per=segMeta[gsi].period;
+    var pg=pinAt(gsi,'GK');
+    if(pg){ gkForSeg[gsi]=pg; gkAcc[pg]=(gkAcc[pg]||0)+gdur; continue; }
+    var po=pinnedOutfield(gsi);
+    var elig=allKeepers.filter(function(pl){ return !po[pl.id]; });
+    var cand=null;
+    if(gsi>0 && segMeta[gsi-1].period===per){
+      var prevK=gkForSeg[gsi-1];
+      if(prevK && elig.some(function(pl){ return pl.id===prevK; })) cand=prevK;
+    }
+    if(!cand && elig.length){
+      elig.sort(function(a,b){
+        var da=(gkAcc[a.id]||0), db=(gkAcc[b.id]||0);
+        if(da!==db) return da-db;
+        var ra=(schedRank[a.id]!=null?schedRank[a.id]:99), rb=(schedRank[b.id]!=null?schedRank[b.id]:99);
+        if(ra!==rb) return ra-rb;
+        return a.id<b.id?-1:1;
+      });
+      cand=elig[0].id;
+    }
+    gkForSeg[gsi]=cand; if(cand) gkAcc[cand]=(gkAcc[cand]||0)+gdur;
+  }
+  // total GK minutes each player tends goal across the whole game (schedule + pins)
   var gkScheduledTotal={};
-  var periodMinutes={}; segMeta.forEach(function(s){ periodMinutes[s.period]=(periodMinutes[s.period]||0)+s.dur; });
-  for(var pp in periodMinutes){ var kid=gkSched[pp]; if(kid) gkScheduledTotal[kid]=(gkScheduledTotal[kid]||0)+periodMinutes[pp]; }
+  gkForSeg.forEach(function(kid, i){ if(kid) gkScheduledTotal[kid]=(gkScheduledTotal[kid]||0)+segMeta[i].dur; });
+  // pre-count pinned OUTFIELD minutes (for segments being planned) into the load
+  for(var psi=fromSeg; psi<segMeta.length; psi++){
+    OUTFIELD_SLOTS.forEach(function(sl){ var pid=pinAt(psi,sl.key); if(pid) fldMin[pid]=(fldMin[pid]||0)+segMeta[psi].dur; });
+  }
 
   function loadOf(id){ return (fldMin[id]||0)*10 + (gkScheduledTotal[id]||0)*10*GK_FAIR; }
   // Outfield guarantee: a player who tends goal in some OTHER period must get at
@@ -606,22 +662,23 @@ function generatePlan(game, opts){
 
   for(var si=fromSeg; si<segMeta.length; si++){
     var period=segMeta[si].period, dur=segMeta[si].dur;
-    var gkId = gkSched[period];
-    if(gkId && game.availability[gkId]===false) gkId=null;
-    if(!gkId){
-      var kp = avail.filter(function(pl){ return pl.positions.indexOf('GK')>=0; });
-      gkId = kp.length? kp[period % kp.length].id : null;
-    }
+    var gkId = gkForSeg[si];
 
-    var candidates = avail.filter(function(pl){ return pl.id!==gkId; });
-    var n = OUTFIELD_SLOTS.length;       // 10
-    var m = candidates.length;
+    // place pinned outfield cells first; they constrain the optimizer
     var assign = {};
+    var pinnedSlotKeys={};
+    OUTFIELD_SLOTS.forEach(function(sl){ var pid=pinAt(si,sl.key); if(pid){ assign[sl.key]=pid; pinnedSlotKeys[sl.key]=true; } });
+    var pOut={}; for(var pk in pinnedSlotKeys){ pOut[assign[pk]]=true; }
 
-    if(m>=n){
+    var openSlots = OUTFIELD_SLOTS.filter(function(sl){ return !pinnedSlotKeys[sl.key]; });
+    var candidates = avail.filter(function(pl){ return pl.id!==gkId && !pOut[pl.id]; });
+    var n = openSlots.length;
+    var m = candidates.length;
+
+    if(n>0 && m>=n){
       var cost=[]; for(var r=0;r<=n;r++) cost.push(new Array(m+1).fill(0));
       for(var ri=1;ri<=n;ri++){
-        var slot=OUTFIELD_SLOTS[ri-1];
+        var slot=openSlots[ri-1];
         for(var ci=1;ci<=m;ci++){
           var cc=cellCost(candidates[ci-1], slot, si, loadOf, prev, ci);
           if(cc<BIG) cc+=keeperInsurance(candidates[ci-1], gkId);
@@ -631,12 +688,12 @@ function generatePlan(game, opts){
       var r2c = hungarian(cost, n, m);
       for(var ri2=1;ri2<=n;ri2++){
         var col=r2c[ri2];
-        var slotKey=OUTFIELD_SLOTS[ri2-1].key;
+        var slotKey=openSlots[ri2-1].key;
         assign[slotKey] = (col>0 && cost[ri2][col]<BIG)? candidates[col-1].id : null;
       }
-    } else {
+    } else if(n>0){
       var pool=candidates.slice();
-      OUTFIELD_SLOTS.forEach(function(slot){
+      openSlots.forEach(function(slot){
         var best=-1,bestc=BIG;
         for(var q=0;q<pool.length;q++){
           var c=cellCost(pool[q],slot,si,loadOf,prev,q+1);
@@ -650,10 +707,12 @@ function generatePlan(game, opts){
 
     assign['GK']=gkId;
 
-    // accrue minutes by this segment's duration
+    // accrue minutes by this segment's duration (pinned outfield already pre-counted)
     SLOTS.forEach(function(s){
       var pid=assign[s.key];
-      if(pid){ if(s.key==='GK') gkMin[pid]+=dur; else fldMin[pid]+=dur; }
+      if(!pid) return;
+      if(s.key==='GK'){ gkMin[pid]+=dur; }
+      else if(!pinnedSlotKeys[s.key]){ fldMin[pid]+=dur; }
     });
 
     segments[si]={period:period, dur:dur, slots:assign};
@@ -901,7 +960,7 @@ function ensureGame(){
 }
 function newGame(){
   var avail={}; state.players.forEach(function(p){ avail[p.id]=true; });
-  var g={ id:uid('g'), name:'', date:Date.now(), periods:2, minutes:35, subInterval:defaultSub(35), availability:avail, plan:null, locked:false, live:{period:0} };
+  var g={ id:uid('g'), name:'', date:Date.now(), periods:2, minutes:35, subInterval:defaultSub(35), availability:avail, plan:null, pins:{}, locked:false, live:{period:0} };
   state.games.push(g); state.currentGameId=g.id; save();
   return g;
 }
@@ -979,8 +1038,9 @@ function renderPlan(){
       (function(si){
         var td=el('td');
         var pid=g.plan.segments[si].slots[slot.key];
-        var cell=el('div','cell'+(pid?'':' empty'));
+        var cell=el('div','cell'+(pid?'':' empty')+(isPinned(g,si,slot.key)?' pinned':''));
         cell.appendChild(el('div','who', pid? shortName(byId(pid)) : '—'));
+        if(isPinned(g,si,slot.key)){ var pn=el('div','pinmark','📌'); pn.title='Pinned — kept when generating'; cell.appendChild(pn); }
         var fl=flags[si+'|'+slot.key];
         if(fl){ var fw=el('div','flags'); fl.forEach(function(y){ var b=el('span','fl '+y.cls,y.t); b.title=y.title; fw.appendChild(b); }); cell.appendChild(fw); }
         if(ui.selCell && ui.selCell.si===si && ui.selCell.key===slot.key) td.classList.add('sel');
@@ -997,6 +1057,38 @@ function renderPlan(){
   renderPlanPitch(g);
 }
 function shortName(pl){ if(!pl) return '—'; var parts=pl.name.split(/\s+/); return parts[0] + (parts[1]? ' '+parts[1][0]:''); }
+
+/* ----- Pins (subset lock respected by Generate) ----- */
+function pinKey(si, slotKey){ return si+'|'+slotKey; }
+function isPinned(g, si, slotKey){ return !!(g && g.pins && g.pins[pinKey(si,slotKey)]); }
+function countPins(g){ return (g && g.pins)? Object.keys(g.pins).length : 0; }
+function setPin(g, si, slotKey, pid){ if(!g.pins) g.pins={}; if(pid) g.pins[pinKey(si,slotKey)]=pid; else delete g.pins[pinKey(si,slotKey)]; }
+function clearPins(g){ g.pins={}; }
+// drop pins whose cell no longer holds the pinned player (kept tidy after edits)
+function prunePins(g){
+  if(!g.pins || !g.plan || !g.plan.segments) return;
+  Object.keys(g.pins).forEach(function(k){
+    var parts=k.split('|'); var si=+parts[0], key=parts[1];
+    var seg=g.plan.segments[si];
+    if(!seg || seg.slots[key]!==g.pins[k]) delete g.pins[k];
+  });
+}
+function pinStartingXI(){
+  var g=currentGame(); if(!g||!g.plan||!g.plan.segments||!g.plan.segments[0]){ toast('No plan yet'); return; }
+  pushUndo();
+  var seg=g.plan.segments[0]; var c=0;
+  SLOTS.forEach(function(s){ var pid=seg.slots[s.key]; if(pid){ setPin(g,0,s.key,pid); c++; } });
+  save(); renderPlan(); toast('Pinned starting XI ('+c+' slots)');
+}
+function generateRest(){
+  var g=currentGame(); if(!g){ toast('No game'); return; }
+  if(g.locked){ toast('Unlock first'); return; }
+  if(!countPins(g)){ toast('No pins — use Regenerate'); return; }
+  pushUndo();
+  g.plan=generatePlan(g);   // pins in game.pins are honored as hard constraints
+  save(); renderPlan(); toast('Generated around '+countPins(g)+' pinned cell'+(countPins(g)>1?'s':''));
+}
+
 
 function renderPlanSummary(g, stat){
   var host=document.getElementById('planSummary');
@@ -1092,10 +1184,11 @@ function buildPitch(g, gi, opts){
   SLOTS.forEach(function(s){
     var c=PITCH[s.key]; if(!c) return;
     var pid=seg.slots[s.key];
-    var tok=el('div','tok'+(pid?'':' empty'));
+    var tok=el('div','tok'+(pid?'':' empty')+(isPinned(g,gi,s.key)?' pinned':''));
     tok.style.left=c.x+'%'; tok.style.top=(c.y/1.5)+'%';
     tok.appendChild(el('div','pl', s.label));
     tok.appendChild(el('div','nm', pid? shortName(byId(pid)) : 'OPEN'));
+    if(isPinned(g,gi,s.key)){ var pnt=el('div','tokpin','📌'); pnt.title='Pinned'; tok.appendChild(pnt); }
     if(pid){
       var pl=byId(pid);
       if(pl){ var ft=el('div','foot', pl.foot||''); tok.appendChild(ft); }
@@ -1238,6 +1331,21 @@ function onCellTap(si, slotKey){
   var sheet=document.getElementById('sheet'); sheet.innerHTML='';
   sheet.appendChild(el('h3',null,label+' · '+slot.label + (curId? ' — '+shortName(byId(curId)) : ' — empty')));
 
+  // Pin / Unpin this cell (a subset lock the generator respects)
+  var pinned=isPinned(g,si,slotKey);
+  var pinBtn=el('button','btn '+(pinned?'':'sec')+' sm', pinned? '📌 Unpin this cell' : '📌 Pin this cell');
+  pinBtn.style.width='100%'; pinBtn.style.marginBottom='4px';
+  if(!curId && !pinned){ pinBtn.disabled=true; pinBtn.classList.add('ghost'); pinBtn.textContent='📌 Pin (fill the cell first)'; }
+  pinBtn.onclick=function(){
+    pushUndo();
+    if(pinned) setPin(g,si,slotKey,null);
+    else setPin(g,si,slotKey,curId);
+    save(); renderPlan(); renderLive(); closeSheet();
+    toast(pinned?'Unpinned':'Pinned');
+  };
+  sheet.appendChild(pinBtn);
+  sheet.appendChild(el('div','muted small','Pinned cells are kept when you tap “Generate rest”.')).style.marginBottom='6px';
+
   // Who is on field this segment
   var onFieldIds={}; SLOTS.forEach(function(s){ var id=seg.slots[s.key]; if(id) onFieldIds[id]=s.key; });
   var availIds = state.players.filter(function(p){return g.availability[p.id]!==false;}).map(function(p){return p.id;});
@@ -1286,12 +1394,12 @@ function doSub(si, slotKey, newId){
   var displaced=slots[slotKey];
   slots[slotKey]=newId;
   if(otherKey) slots[otherKey]=displaced; // swap
-  save(); renderPlan(); renderLive(); toast('Substituted');
+  prunePins(g); save(); renderPlan(); renderLive(); toast('Substituted');
 }
 function swapSlots(si, a, b){
   var g=currentGame(); var slots=g.plan.segments[si].slots;
   var t=slots[a]; slots[a]=slots[b]; slots[b]=t;
-  save(); renderPlan(); renderLive(); toast('Swapped');
+  prunePins(g); save(); renderPlan(); renderLive(); toast('Swapped');
 }
 
 /* ----- Live ----- */
@@ -1531,7 +1639,7 @@ function markPlayerOut(pid, currentSeg){
     fixed.push(copy);
   }
   var np=generatePlan(g, { fromSegment:fromSeg, fixedSegments:fixed, startMinutes:startMin, startGkMin:startGk });
-  g.plan=np; save();
+  g.plan=np; prunePins(g); save();
   renderAvailability(); renderPlan(); renderLive();
   toast('Re-planned remaining windows');
 }
@@ -1584,7 +1692,7 @@ function exportText(){
 /* ============================================================
    CROSS-DEVICE SHARE / EXPORT / IMPORT
    ============================================================ */
-var SHARE_V = 1; // payload schema version (bump if payload shape changes)
+var SHARE_V = 2; // payload schema version (bump if payload shape changes) — v2 adds pinned cells
 function _clone(o){ return JSON.parse(JSON.stringify(o)); }
 function _pad2(n){ return (n<10?'0':'')+n; }
 // UTF-8 safe base64 <-> string
@@ -1605,6 +1713,7 @@ function playersForGame(g){
   var ids={};
   if(g.availability) Object.keys(g.availability).forEach(function(id){ ids[id]=1; });
   if(g.plan && g.plan.segments) g.plan.segments.forEach(function(seg){ for(var k in seg.slots){ if(seg.slots[k]) ids[seg.slots[k]]=1; } });
+  if(g.pins) Object.keys(g.pins).forEach(function(k){ if(g.pins[k]) ids[g.pins[k]]=1; });
   return state.players.filter(function(p){ return ids[p.id]; }).map(_clone);
 }
 function makeGamePayload(g){ return { app:'lineup-manager', v:SHARE_V, ls:LS_KEY, type:'game', game:_clone(g), players:playersForGame(g) }; }
@@ -1704,6 +1813,7 @@ function reconcilePlayers(sharedPlayers){
 function remapGameIds(g, map){
   if(g.availability){ var na={}; Object.keys(g.availability).forEach(function(id){ na[map[id]||id]=g.availability[id]; }); g.availability=na; }
   if(g.plan && g.plan.segments){ g.plan.segments.forEach(function(seg){ for(var k in seg.slots){ if(seg.slots[k]) seg.slots[k]=map[seg.slots[k]]||seg.slots[k]; } }); }
+  if(g.pins){ var np={}; Object.keys(g.pins).forEach(function(k){ var v=g.pins[k]; np[k]=map[v]||v; }); g.pins=np; }
   return g;
 }
 // robustly turn pasted text (raw JSON, base64 code, or a full share URL) into an object
@@ -1904,7 +2014,12 @@ function wire(){
     };
   });
 
-  document.getElementById('regenBtn').onclick=function(){ var g=currentGame(); if(!g){toast('No game');return;} if(g.locked){toast('Unlock first');return;} pushUndo(); g.plan=generatePlan(g); save(); renderPlan(); toast('Regenerated'); };
+  document.getElementById('regenBtn').onclick=function(){ var g=currentGame(); if(!g){toast('No game');return;} if(g.locked){toast('Unlock first');return;}
+    var np=countPins(g);
+    if(np>0 && !confirm('Regenerate wipes everything, including '+np+' pinned cell'+(np>1?'s':'')+'.\n\nUse “Generate rest” to keep pins. Continue and clear pins?')) return;
+    pushUndo(); clearPins(g); g.plan=generatePlan(g); save(); renderPlan(); toast('Regenerated'); };
+  document.getElementById('genRestBtn').onclick=generateRest;
+  document.getElementById('pinXiBtn').onclick=pinStartingXI;
   document.getElementById('lockBtn').onclick=function(){ var g=currentGame(); if(!g||!g.plan)return; g.locked=!g.locked; save(); renderPlan(); toast(g.locked?'Locked':'Unlocked'); };
   document.getElementById('exportBtn').onclick=exportText;
   document.getElementById('printBtn').onclick=function(){ window.print(); };
@@ -1943,6 +2058,7 @@ document.addEventListener('DOMContentLoaded', boot);
 window.__LM__ = {
   get state(){return state;},
   generatePlan:generatePlan, computeStats:computeStats, computeFlags:computeFlags,
+  setPin:setPin, clearPins:clearPins, countPins:countPins, isPinned:isPinned, pinStartingXI:pinStartingXI, generateRest:generateRest, prunePins:prunePins,
   buildSegments:buildSegments, buildGkSchedule:buildGkSchedule,
   segTransition:segTransition, slotEligRank:slotEligRank, PITCH:PITCH,
   segInfo:segInfo, playerPathCaption:playerPathCaption, renderPlanPitch:renderPlanPitch,
