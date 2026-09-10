@@ -106,34 +106,55 @@ server. Cloud sync just adds an online copy that the app pushes to and pulls fro
 - The app **auto-pushes** your changes (debounced) and **auto-pulls** on open and every ~20s
   while online. Offline changes are **queued and flushed on reconnect**.
 
-### Deploy it (one command, on your personal Azure subscription)
+### Deploy it (on your personal Azure subscription)
 
 The app has kids' names in it, so deploy to a **personal** subscription. You need the
-[Azure Developer CLI (`azd`)](https://aka.ms/azd-install) — on Windows: `winget install Microsoft.Azd`.
+[Azure Developer CLI (`azd`)](https://aka.ms/azd-install) and the
+[Static Web Apps CLI](https://aka.ms/swa-cli) — on Windows:
+`winget install Microsoft.Azd` and `npm install -g @azure/static-web-apps-cli`.
+
+**Step 1 — provision the infrastructure with azd** (Static Web App Free + Storage + the API's
+app settings):
 
 ```sh
-# 1. Sign in with your PERSONAL account (opens a browser)
+# Sign in with your PERSONAL account (opens a browser)
 azd auth login
 
-# 2. Create an environment and point it at your personal subscription
+# Create an environment and point it at your personal subscription
 azd env new lineup-manager
 azd env set AZURE_SUBSCRIPTION_ID <your-personal-subscription-id>
 azd env set AZURE_LOCATION eastus2
 
-# 3. Provision + deploy everything (Static Web App + Functions + Storage)
-azd up
+# Provision the Azure resources
+azd provision
 ```
 
 Confirm the selected subscription shows your **personal** account (e.g. "Visual Studio
-Enterprise"), **not** a corporate one, before continuing. When `azd up` finishes it prints the
-**Static Web App URL** — that's the synced version of the app. Cost is **~$0**: Static Web Apps
+Enterprise"), **not** a corporate one, before continuing. Cost is **~$0**: Static Web Apps
 Free tier + a few KB of blob storage (covered by Visual Studio credits).
 
-> **Fallback deploy:** if you'd rather not use `azd`, you can deploy with the SWA CLI:
-> `swa deploy --app-location . --api-location api --deployment-token <token>` (get the token
-> from the Static Web App's *Manage deployment token* in the Azure portal), after creating the
-> Static Web App + Storage account and setting `AZURE_STORAGE_CONNECTION_STRING` in the API's
-> configuration.
+**Step 2 — deploy the site + API with the SWA CLI.** The managed Functions need their npm
+dependencies bundled, and the upload should contain only the app files (not `.git`/`infra`), so
+build the API and deploy from a clean folder:
+
+```sh
+# Install the API's production dependencies so they ship with the function
+npm --prefix api install --omit=dev
+
+# Stage just the front-end files
+mkdir dist && cp index.html staticwebapp.config.json dist/
+
+# Get the deployment token from the Static Web App (Portal → your SWA →
+# "Manage deployment token"), then deploy the app + managed API
+swa deploy dist --api-location api --deployment-token <token> --env production
+```
+
+When it finishes it prints the **Static Web App URL** (e.g.
+`https://<name>.azurestaticapps.net`) — that's the synced version of the app.
+
+> Why not just `azd up`? azd provisions everything correctly, but its built-in Static Web Apps
+> deploy step doesn't pass `--api-location`, so it would skip the managed Functions. Using the
+> SWA CLI for the deploy step (above) is what reliably ships both the site and the API.
 
 ### Connect a team
 
