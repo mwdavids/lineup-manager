@@ -64,8 +64,12 @@ control; nothing is ever uploaded to a server.
    its periods/minutes/sub-interval, availability, the full plan, and the pitch map — is added
    to that device's **Saved games** and opened. Nothing you already had is overwritten.
 
-The entire game is encoded in the part of the URL **after the `#`**, which browsers never send
-to a server, so your data stays private and it works offline.
+**Short vs. long links.** When the app can reach the internet it stores the game server-side
+and gives you a tiny **`#s=…` short link** (great for Messages, which can truncate long URLs) —
+opening that link needs internet. If you're **offline**, it automatically falls back to a long
+**`#g=…` link** that carries the whole game in the URL after the `#` (which browsers never send
+to a server) and opens with no connection at all. Both round-trip the plan, availability, and
+pins; old `#g=` links keep working forever.
 
 - **Share roster** (Game Setup → **🔗 Share roster**) makes a `#r=…` link that syncs just the
   players (foot + positions). Opening it updates matching names and adds any new players,
@@ -109,6 +113,11 @@ server. Cloud sync just adds an online copy that the app pushes to and pulls fro
   managed API. Concurrency uses a version number + ETag: if two coaches edit at once, the
   second save gets a **conflict prompt** ("keep mine / take theirs") instead of silently losing
   data.
+- The same API also backs **short `#s=` game-share links**: `POST /api/share` stores an
+  encoded game payload in a separate `shares` blob container keyed by a random code (no
+  passcode — access is by the unguessable code only), and `GET /api/share?code=…` returns it.
+  This is what lets a shared game travel as a tiny URL instead of a giant one; offline the app
+  falls back to the self-contained long link automatically.
 - The app **auto-pushes** your changes (debounced) and **auto-pulls** on open and every ~20s
   while online. Offline changes are **queued and flushed on reconnect**.
 
@@ -227,7 +236,11 @@ note at the top.)
   an **ON … ▸ slot** strip for bench players *coming on* — so you can literally show a kid
   "you're going here next." **Tap any player** to trace their slot across every window.
 - **Export text** (copyable) and **Print view** (print-friendly), plus **🔗 Share game link**
-  to send the whole game (plan + pitch map) to another device.
+  to send the whole game (plan + pitch map) to another device. **Print view** renders **every
+  period on its own sheet** — a full slots × sub-windows grid per half with player names and a
+  per-period header (game label, half, and window times), followed by a compact minutes-per-
+  player summary. It prints **letter landscape**, black-on-white, with all on-screen chrome
+  (tabs, buttons, ⓘ icons, the sync panel) hidden; the on-screen app is unaffected.
 
 ### Set your starting lineup (pins) 📌
 Want a specific starting XI (or a few fixed choices) and let the app build the rest around it?
@@ -266,10 +279,19 @@ Priority order:
 2. **Equal field time:** minimizes the spread of total minutes across *available* players;
    each game stands alone (no carryover). Rolling sub windows are what make this work with
    long halves.
-3. **GK relief:** with a second keeper available it aims for a ~50/50 GK split and guarantees
-   each keeper at least one outfield window so nobody is goal-only. Each keeper's full-game
-   goal time is factored into the fairness balance from the first window, so keepers don't end
-   up over- or under-played.
+3. **GK relief (whole-half blocks):** with two eligible keepers available it prefers giving
+   each keeper **one contiguous half in goal and the other half outfield** — e.g. keeper A
+   plays goal all of the first half and takes an eligible field slot in the second, while
+   keeper B does the reverse. With equal halves this naturally yields a **~50/50 GK split**
+   as clean half-blocks rather than per-window alternation, and guarantees each keeper at
+   least one outfield window so nobody is goal-only. This preference is **soft** and ranks
+   *below* the guarantee that every available player gets at least one half of playing time —
+   it never benches someone to protect a keeper's block. Each keeper's goal time is factored
+   into the fairness balance from the first window so keepers aren't over- or under-played.
+   **Fallbacks:** if only **one** GK-capable player is available, that keeper covers goal on a
+   best-effort split (no ineligible player is ever forced into goal); odd period counts
+   generalize to a distinct keeper per period where possible. Pinned GK cells are always
+   honored and the half-blocks are built around them.
 4. **Footedness (soft):** prefers left-footers on LB/LW/left-CB and right-footers on the
    right.
 5. **Position stability (soft):** prefers a player keep the same position while on the

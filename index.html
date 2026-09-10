@@ -202,13 +202,28 @@
   .arrivestrip .ac{font-size:12px;font-weight:700;border:1.5px solid var(--accent);color:var(--accent-d);border-radius:8px;padding:4px 8px;background:#f2fbf6}
   .pathcap{margin-top:8px;font-size:12px;font-weight:600;color:var(--ink);background:var(--chip);border-radius:8px;padding:8px}
   @media print{
+    @page{ size: letter landscape; margin: 0.5in; }
     header,.tabbar,.noprint{display:none!important}
+    /* Hide the whole on-screen app; show only the generated print view. */
+    body>*:not(#printRoot){display:none!important}
     body{background:#fff;color:#000;font-size:12px}
-    #app{padding:0}
-    .panel{box-shadow:none;border:1px solid #999;border-radius:0}
-    table.plan th,table.plan td{border:1px solid #444}
-    .cell{cursor:default!important}
+    #printRoot{display:block!important;color:#000;background:#fff}
+    #printRoot .pperiod{break-after:page;page-break-after:always}
+    #printRoot .pperiod:last-child{break-after:auto;page-break-after:auto}
+    #printRoot .pgame{font-size:16px;font-weight:800;margin:0 0 2px}
+    #printRoot .phdr{font-size:14px;font-weight:700;margin:0 0 2px}
+    #printRoot .psub{font-size:11px;color:#000;margin:0 0 8px}
+    #printRoot table{width:100%;border-collapse:collapse;break-inside:avoid;page-break-inside:avoid;table-layout:fixed}
+    #printRoot th,#printRoot td{border:1px solid #333;padding:5px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis}
+    #printRoot tr{break-inside:avoid;page-break-inside:avoid}
+    #printRoot thead th{background:#eee;font-size:11px}
+    #printRoot .pslot{text-align:left;font-weight:700;white-space:nowrap;width:70px}
+    #printRoot .pempty{color:#999}
+    #printRoot .psum{break-before:page;page-break-before:always;break-inside:avoid}
+    #printRoot .psum table{table-layout:auto}
+    #printRoot .psum td,#printRoot .psum th{text-align:left;font-size:11px;padding:3px 6px}
   }
+  #printRoot{display:none}
 </style>
 </head>
 <body>
@@ -442,6 +457,7 @@
 
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
+<div id="printRoot" aria-hidden="true"></div>
 
 <script>
 "use strict";
@@ -620,7 +636,17 @@ function hungarian(cost, n, m){
   return rowToCol;
 }
 
-/* Build GK schedule across periods to approximate a 50/50 split. */
+/* Build the GK schedule as WHOLE-PERIOD (whole-half) contiguous blocks.
+   Desired shape: one eligible keeper tends goal for an entire half, a DIFFERENT
+   eligible keeper tends goal for the next half, and so on — so with two 35-min
+   halves the two keepers split goal ~50/50 as clean half-blocks (not per-window
+   alternation), and each keeper is free to play outfield during the half they are
+   not in goal. Returns one keeper id per PERIOD (all sub-windows of that period
+   inherit it). Fallbacks:
+     - 0 GK-capable players available -> null every period (GK slot left to fill).
+     - exactly 1 keeper -> that keeper covers goal every period (best-effort).
+     - >=2 keepers -> rotate through keepers so the same keeper never covers two
+       adjacent halves and goal minutes spread as evenly as possible. */
 function buildGkSchedule(availPlayers, P){
   var keepers = availPlayers.filter(function(pl){ return pl.positions.indexOf('GK')>=0; });
   // sort: primary GK first, then by name for determinism
@@ -630,9 +656,10 @@ function buildGkSchedule(availPlayers, P){
     return a.name.localeCompare(b.name);
   });
   var sched=[];
-  for(var p=0;p<P;p++){
-    sched.push(keepers.length? keepers[p % keepers.length].id : null);
-  }
+  if(!keepers.length){ for(var p0=0;p0<P;p0++) sched.push(null); return sched; }
+  if(keepers.length===1){ for(var p1=0;p1<P;p1++) sched.push(keepers[0].id); return sched; }
+  // >=2 keepers: distinct keeper per adjacent half, whole-period blocks.
+  for(var p=0;p<P;p++) sched.push(keepers[p % keepers.length].id);
   return sched;
 }
 
@@ -1778,6 +1805,73 @@ function planToText(g){
   });
   return lines.join('\n');
 }
+/* Build a paper-friendly print view: one grid per period (all slots × that
+   period's sub-windows) with a page break between periods, plus a compact
+   minutes summary. Rendered into #printRoot which is display:none on screen and
+   shown only under @media print. */
+function fmtGameDate(g){
+  try{ if(g && g.date) return new Date(g.date).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }catch(e){}
+  return '';
+}
+function buildPrintView(g){
+  var root=document.getElementById('printRoot');
+  if(!root) return;
+  root.innerHTML='';
+  if(!g || !g.plan || !g.plan.segments){ root.innerHTML='<p>No plan to print — generate a plan first.</p>'; return; }
+  var info=segInfo(g.plan);
+  var total=(g.periods||0)*(g.minutes||0);
+  var dstr=fmtGameDate(g);
+  // group window indices by period
+  var byPeriod={};
+  info.forEach(function(x){ (byPeriod[x.period]=byPeriod[x.period]||[]).push(x); });
+  Object.keys(byPeriod).map(Number).sort(function(a,b){return a-b;}).forEach(function(p){
+    var wins=byPeriod[p];
+    var sec=el('div','pperiod');
+    sec.appendChild(el('div','pgame', (g.name||'Game') + (dstr? ' — '+dstr : '')));
+    sec.appendChild(el('div','phdr', 'Formation 4-3-3 · '+periodName(g,p)+' · '+g.minutes+' min'));
+    sec.appendChild(el('div','psub', 'Sub windows: '+wins.map(function(w){return w.startMin+'–'+w.endMin+"'";}).join('  ·  ')
+      +'  ·  '+total+' min total game'));
+    var tbl=el('table');
+    var thead=el('thead'); var htr=el('tr');
+    htr.appendChild(el('th','pslot','Position'));
+    wins.forEach(function(w){ htr.appendChild(el('th','', w.startMin+'–'+w.endMin+"'"+' ('+w.dur+"')")); });
+    thead.appendChild(htr); tbl.appendChild(thead);
+    var tb=el('tbody');
+    SLOTS.forEach(function(slot){
+      var tr=el('tr');
+      tr.appendChild(el('th','pslot',slot.label));
+      wins.forEach(function(w){
+        var pid=g.plan.segments[w.gi].slots[slot.key];
+        var td=el('td', pid?'':'pempty', pid? (byId(pid)?byId(pid).name:'—') : '—');
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb); sec.appendChild(tbl);
+    root.appendChild(sec);
+  });
+  // minutes summary (compact) at the end
+  var stat=computeStats(g);
+  var arr=Object.keys(stat).map(function(k){return stat[k];}).sort(function(a,b){return b.min-a.min;});
+  if(arr.length){
+    var sum=el('div','psum');
+    sum.appendChild(el('div','phdr','Minutes summary'));
+    var st=el('table'); var sh=el('thead'); var shr=el('tr');
+    ['Player','Total','Field','GK'].forEach(function(h){ shr.appendChild(el('th','',h)); });
+    sh.appendChild(shr); st.appendChild(sh);
+    var sbody=el('tbody');
+    arr.forEach(function(s){
+      var tr=el('tr');
+      tr.appendChild(el('td','', byId(s.id)?byId(s.id).name:'—'));
+      tr.appendChild(el('td','', s.min+"'"));
+      tr.appendChild(el('td','', s.field+"'"));
+      tr.appendChild(el('td','', s.gk? s.gk+"'" : '—'));
+      sbody.appendChild(tr);
+    });
+    st.appendChild(sbody); sum.appendChild(st); root.appendChild(sum);
+  }
+}
+
 function exportText(){
   var g=currentGame(); if(!g||!g.plan){ toast('No plan'); return; }
   var txt=planToText(g);
@@ -1861,8 +1955,28 @@ function showShareSheet(title, note, link){
 function shareCurrentGame(){
   var g=currentGame();
   if(!g){ toast('No game to share'); return; }
-  var link=shareUrl('g', makeGamePayload(g));
-  showShareSheet('Share game link', 'Send this to your other device (AirDrop / email / Notes). Opening it there adds this game — plan, availability, and pitch map — to that device.', link);
+  var payload=makeGamePayload(g);
+  var longLink=shareUrl('g', payload);
+  var note='Send this to your other device (AirDrop / email / Notes). Opening it there adds this game — plan, availability, and pitch map — to that device.';
+  // Prefer a short server-backed link (needs internet); fall back to the long,
+  // fully self-contained link when offline or the API is unreachable.
+  var canFetch = (typeof fetch==='function');
+  var online = (typeof navigator==='undefined') || (navigator.onLine!==false);
+  if(!canFetch || !online){
+    showShareSheet('Share game link', note+' (Long self-contained link — works offline.)', longLink);
+    return;
+  }
+  toast('Creating short link…');
+  fetch(syncApiBase()+'/share', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({payload: payload}) })
+    .then(function(r){ return r.ok ? r.json() : Promise.reject(new Error('http '+r.status)); })
+    .then(function(j){
+      if(!j || !j.code) throw new Error('no code');
+      var shortLink=appBaseUrl()+'#s='+j.code;
+      showShareSheet('Share game link', note+' Short link — opening it needs internet.', shortLink);
+    })
+    .catch(function(){
+      showShareSheet('Share game link', note+' (Offline — using a long self-contained link.)', longLink);
+    });
 }
 function shareRoster(){
   if(!state.players.length){ toast('Roster is empty'); return; }
@@ -2022,6 +2136,8 @@ function openImportSheet(){
   var row=el('div','row'); row.style.marginTop='10px';
   var imp=el('button','btn grow','Import from pasted text');
   imp.onclick=function(){
+    var sc=(ta.value||'').match(/[#&]s=([A-Za-z0-9]{4,16})/);
+    if(sc){ closeSheet(); loadSharedCode(sc[1]); return; }
     var obj=parseImportText(ta.value);
     if(!obj){ toast('Could not read that — check the code/link'); return; }
     closeSheet(); routeImport(obj);
@@ -2047,6 +2163,8 @@ function handleImportFile(file){
 // On load: import a #g= (game) or #r= (roster) share link, with confirmation
 function checkHashImport(){
   var h=location.hash||''; if(!h || h.length<3) return false;
+  var sm=h.match(/[#&]s=([A-Za-z0-9]{4,16})/);
+  if(sm){ var code=sm[1]; clearHash(); loadSharedCode(code); return true; }
   var m=h.match(/[#&]([grf])=([^&]+)/);
   if(!m) return false;
   var enc=m[2], obj=null;
@@ -2054,6 +2172,15 @@ function checkHashImport(){
   clearHash();
   if(!obj){ toast('Shared link could not be read'); return false; }
   return routeImport(obj);
+}
+// Resolve a short #s=<code> link by fetching the stored payload from the API.
+function loadSharedCode(code){
+  if(typeof fetch!=='function'){ toast('Cannot open this link here'); return; }
+  toast('Loading shared game…');
+  fetch(syncApiBase()+'/share?code='+encodeURIComponent(code))
+    .then(function(r){ if(r.status===404) return Promise.reject(new Error('not_found')); return r.ok ? r.json() : Promise.reject(new Error('http '+r.status)); })
+    .then(function(j){ var obj=j&&j.payload; if(!obj) throw new Error('empty'); routeImport(obj); })
+    .catch(function(e){ toast((e&&e.message==='not_found') ? 'Shared link expired or not found' : 'Could not load shared link — check your connection'); });
 }
 function clearHash(){
   try{
@@ -2130,7 +2257,8 @@ function wire(){
   document.getElementById('pinXiBtn').onclick=pinStartingXI;
   document.getElementById('lockBtn').onclick=function(){ var g=currentGame(); if(!g||!g.plan)return; g.locked=!g.locked; save(); renderPlan(); toast(g.locked?'Locked':'Unlocked'); };
   document.getElementById('exportBtn').onclick=exportText;
-  document.getElementById('printBtn').onclick=function(){ window.print(); };
+  document.getElementById('printBtn').onclick=function(){ var g=currentGame(); if(!g||!g.plan){toast('No plan');return;} buildPrintView(g); window.print(); };
+  window.addEventListener('beforeprint', function(){ var g=currentGame(); if(g&&g.plan) buildPrintView(g); });
   document.getElementById('dupBtn').onclick=function(){ var g=currentGame(); if(g) duplicateGame(g.id); };
   document.getElementById('shareGameBtn').onclick=shareCurrentGame;
 
@@ -2461,6 +2589,7 @@ window.__LM__ = {
   encodePayload:encodePayload, decodePayload:decodePayload,
   makeGamePayload:makeGamePayload, makeRosterPayload:makeRosterPayload, makeFullPayload:makeFullPayload,
   shareUrl:shareUrl, routeImport:routeImport, checkHashImport:checkHashImport,
+  loadSharedCode:loadSharedCode, buildPrintView:buildPrintView,
   parseImportText:parseImportText, currentGame:currentGame, save:save,
   Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase
 };

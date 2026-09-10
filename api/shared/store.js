@@ -104,6 +104,71 @@ function isPreconditionError(e) {
   );
 }
 
+/* -------- Short share links (no passcode) --------
+ * One blob per share: shares/<code>.json holding { v, createdAt, payload }.
+ * Codes are short base62 tokens; GET is public-read-by-code (unguessable). */
+const SHARES_CONTAINER = 'shares';
+let _shares = null;
+async function sharesContainer() {
+  if (_shares) return _shares;
+  const svc = BlobServiceClient.fromConnectionString(connString());
+  const c = svc.getContainerClient(SHARES_CONTAINER);
+  await c.createIfNotExists(); // private; access is by unguessable code via the API
+  _shares = c;
+  return c;
+}
+
+const SHARE_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+function newShareCode(len) {
+  const n = len || 8;
+  const bytes = crypto.randomBytes(n);
+  let out = '';
+  for (let i = 0; i < n; i++) out += SHARE_ALPHABET[bytes[i] % SHARE_ALPHABET.length];
+  return out;
+}
+function normalizeShareCode(code) {
+  if (typeof code !== 'string') return null;
+  const t = code.trim();
+  if (!/^[A-Za-z0-9]{4,16}$/.test(t)) return null;
+  return t;
+}
+
+// Write a share, retrying on the (astronomically rare) code collision.
+async function writeShare(payload) {
+  const c = await sharesContainer();
+  const doc = JSON.stringify({ v: 1, createdAt: new Date().toISOString(), payload });
+  const bytes = Buffer.byteLength(doc);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = newShareCode(8);
+    const blob = c.getBlockBlobClient(code + '.json');
+    try {
+      await blob.upload(doc, bytes, {
+        blobHTTPHeaders: { blobContentType: 'application/json' },
+        conditions: { ifNoneMatch: '*' },
+      });
+      return code;
+    } catch (e) {
+      if (isPreconditionError(e)) continue; // collision → new code
+      throw e;
+    }
+  }
+  throw new Error('share_code_exhausted');
+}
+
+async function readShare(code) {
+  const c = await sharesContainer();
+  const blob = c.getBlockBlobClient(code + '.json');
+  try {
+    const dl = await blob.download();
+    const txt = await streamToString(dl.readableStreamBody);
+    const doc = JSON.parse(txt);
+    return doc.payload !== undefined ? doc.payload : doc;
+  } catch (e) {
+    if (e.statusCode === 404 || e.code === 'BlobNotFound') return null;
+    throw e;
+  }
+}
+
 module.exports = {
   normalizeTeamId,
   hashPass,
@@ -112,4 +177,7 @@ module.exports = {
   readTeam,
   writeTeam,
   isPreconditionError,
+  writeShare,
+  readShare,
+  normalizeShareCode,
 };
