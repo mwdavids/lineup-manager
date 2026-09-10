@@ -113,7 +113,8 @@ clear message instead of corrupting your data.
   - `2` / `3` — playing a secondary/tertiary position
   - `FT` — wrong foot on a flank (LB/LW/RB/RW or left-CB)
   - `GK` — keeper-only or keeping goal more than half the game
-  - `↔` — moved position on field without a bench rest
+  - `↔` — moved position on field **within the same half** without a bench rest
+    (a position change across the halftime break is normal and is not flagged)
 - **Manual swap**: tap any slot → sub in a bench player or swap two positions, with live
   re-validation. **Regenerate** and **Lock plan** buttons. **Undo** (top bar) reverts the
   last change.
@@ -121,7 +122,8 @@ clear message instead of corrupting your data.
   spatial shape (back four, DM deep, two AMs advanced, front three). Pick any sub window with
   the chips; empty/at-risk slots are shown in dashed red. With **"Show next-window changes"**
   on, it previews the coming substitutions right on the pitch — blue arrows for players
-  *moving position*, a red **OFF** badge for players *coming off*, and green dashed arrows +
+  *moving position within the same half*, a red **OFF** badge for players *coming off*, and
+  green dashed arrows +
   an **ON … ▸ slot** strip for bench players *coming on* — so you can literally show a kid
   "you're going here next." **Tap any player** to trace their slot across every window.
 - **Export text** (copyable) and **Print view** (print-friendly), plus **🔗 Share game link**
@@ -172,7 +174,9 @@ Priority order:
    right.
 5. **Position stability (soft):** prefers a player keep the same position while on the
    field, with position changes normally requiring a bench rest — but the planner *may*
-   move an on-field player when it clearly improves fairness/coverage, and flags it.
+   move an on-field player when it clearly improves fairness/coverage, and flags it. Only
+   changes **within the same half** are penalized or flagged; moving a staying-on player at
+   the halftime break is free (they reset their spot during the stoppage).
 
 **Pinned cells** (see *Set your starting lineup* above) are treated as **hard constraints**:
 the optimizer leaves them exactly as-is and solves only the unpinned cells, with the pinned

@@ -677,6 +677,10 @@ function generatePlan(game, opts){
   for(var si=fromSeg; si<segMeta.length; si++){
     var period=segMeta[si].period, dur=segMeta[si].dur;
     var gkId = gkForSeg[si];
+    // A position change only counts as an on-field "move" when the previous window
+    // is in the SAME period/half (no stoppage). Changes across the halftime break
+    // are free — players walk to new spots during the break.
+    var prevSamePeriod = (si>0) && (segMeta[si-1].period===period);
 
     // place pinned outfield cells first; they constrain the optimizer
     var assign = {};
@@ -694,7 +698,7 @@ function generatePlan(game, opts){
       for(var ri=1;ri<=n;ri++){
         var slot=openSlots[ri-1];
         for(var ci=1;ci<=m;ci++){
-          var cc=cellCost(candidates[ci-1], slot, si, loadOf, prev, ci);
+          var cc=cellCost(candidates[ci-1], slot, si, loadOf, prev, ci, prevSamePeriod);
           if(cc<BIG) cc+=keeperInsurance(candidates[ci-1], gkId);
           cost[ri][ci]=cc;
         }
@@ -710,7 +714,7 @@ function generatePlan(game, opts){
       openSlots.forEach(function(slot){
         var best=-1,bestc=BIG;
         for(var q=0;q<pool.length;q++){
-          var c=cellCost(pool[q],slot,si,loadOf,prev,q+1);
+          var c=cellCost(pool[q],slot,si,loadOf,prev,q+1,prevSamePeriod);
           if(c<BIG) c+=keeperInsurance(pool[q], gkId);
           if(c<bestc){bestc=c;best=q;}
         }
@@ -736,7 +740,7 @@ function generatePlan(game, opts){
   return { segments:segments, periods:game.periods, minutes:game.minutes, subInterval:game.subInterval, generatedAt:Date.now() };
 }
 
-function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex){
+function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex, prevSamePeriod){
   var rank = slotEligRank(pl, slot);
   if(rank<0) return BIG;
   var c = 0;
@@ -749,7 +753,9 @@ function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex){
     for(var k in prev){ if(prev[k]===pl.id){ prevSlotKey=k; break; } }
     if(prevSlotKey){
       if(prevSlotKey===slot.key) c -= 5;              // stayed same position: good
-      else if(prevSlotKey!=='GK') c += 8;             // moved on field without rest
+      // Only penalize a genuine within-period on-field move; moving a staying-on
+      // player at the half boundary is free (they reset during the break).
+      else if(prevSlotKey!=='GK' && prevSamePeriod) c += 8;
     }
   }
   c += (colIndex||0)*0.001;             // deterministic tie-break
@@ -798,8 +804,9 @@ function computeFlags(game){
         if(st && st.field===0 && st.stints>0) f.push({t:'GK',cls:'gk',title:'Keeper-only — no outfield time'});
         else if(st && st.gk > halfGame) f.push({t:'GK',cls:'gk',title:'Keeps goal more than half the game'});
       }
-      // moved on field (consecutive segment, different outfield slot, no bench rest)
-      if(si>0 && s.key!=='GK'){
+      // moved on field (consecutive segment IN THE SAME PERIOD, different outfield
+      // slot, no bench rest). Changes across a period/half boundary are not moves.
+      if(si>0 && s.key!=='GK' && plan.segments[si-1].period===seg.period){
         var pp=plan.segments[si-1].slots; var prevKey=null;
         for(var k in pp){ if(pp[k]===pid){prevKey=k;break;} }
         if(prevKey && prevKey!=='GK' && prevKey!==s.key) f.push({t:'↔',cls:'move',title:'Moved position without a bench rest'});
@@ -1135,9 +1142,12 @@ function svgEl(tag, attrs){
   if(attrs) for(var k in attrs) e.setAttribute(k, attrs[k]);
   return e;
 }
-// diff between two global segments: who moves slot, who leaves, who arrives
+// diff between two global segments: who moves slot, who leaves, who arrives.
+// A slot change only counts as a "move" (blue arrow) when both segments are in the
+// SAME period/half — a change across the halftime break is not an on-field move.
 function segTransition(g, giFrom, giTo){
   var a=g.plan.segments[giFrom].slots, b=g.plan.segments[giTo].slots;
+  var samePeriod = g.plan.segments[giFrom].period===g.plan.segments[giTo].period;
   var aByPlayer={}, bByPlayer={};
   SLOTS.forEach(function(s){ if(a[s.key]) aByPlayer[a[s.key]]=s.key; if(b[s.key]) bByPlayer[b[s.key]]=s.key; });
   var moves={}, off={}, on={};
@@ -1145,7 +1155,7 @@ function segTransition(g, giFrom, giTo){
     var pa=a[s.key];
     if(pa){
       if(bByPlayer[pa]==null) off[s.key]=pa;
-      else if(bByPlayer[pa]!==s.key) moves[pa]={from:s.key, to:bByPlayer[pa]};
+      else if(bByPlayer[pa]!==s.key && samePeriod) moves[pa]={from:s.key, to:bByPlayer[pa]};
     }
     var pb=b[s.key];
     if(pb && aByPlayer[pb]==null) on[s.key]=pb;
@@ -1285,7 +1295,9 @@ function playerPathCaption(g, hlId){
     var chip=el('div','pc-chip '+(w.on?'on':'bench'));
     if(w.on){
       var cameOn = prev && !prev.on;                       // returned from bench
-      var changed = prev && prev.on && prev.label!==w.label; // moved position on field
+      // a within-period slot change is a real on-field move (→); a change across
+      // the half boundary is just a break-time change — show the new position, no →.
+      var changed = prev && prev.on && prev.label!==w.label && w.period===prev.period;
       var cont = prev && prev.on && prev.label===w.label;    // same position continuing
       if(cameOn) chip.appendChild(el('span','pc-dot on'));
       if(changed) chip.appendChild(el('span','pc-move','→'));
