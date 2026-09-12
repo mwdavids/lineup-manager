@@ -4,7 +4,13 @@
     "exclude": ["/api/*", "/*.json", "/*.png", "/*.ico", "/*.svg"]
   },
   "routes": [
-    { "route": "/api/*", "methods": ["GET", "POST", "PUT", "OPTIONS"] }
+    { "route": "/api/me", "allowedRoles": ["authenticated"] },
+    { "route": "/api/teams", "methods": ["POST"], "allowedRoles": ["authenticated"] },
+    { "route": "/api/invite", "methods": ["POST"], "allowedRoles": ["authenticated"] },
+    { "route": "/api/accept", "methods": ["POST"], "allowedRoles": ["authenticated"] },
+    { "route": "/api/*", "methods": ["GET", "POST", "PUT", "OPTIONS"] },
+    { "route": "/.auth/login/github", "statusCode": 404 },
+    { "route": "/.auth/login/twitter", "statusCode": 404 }
   ],
   "responseOverrides": {
     "404": { "rewrite": "/index.html" }

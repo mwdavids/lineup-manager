@@ -19,14 +19,23 @@ function connString() {
   );
 }
 
-let _container = null;
-async function container() {
-  if (_container) return _container;
-  const svc = BlobServiceClient.fromConnectionString(connString());
-  const c = svc.getContainerClient(CONTAINER);
+// Shared BlobServiceClient + a small container-client cache so each container
+// is only created once per warm instance.
+let _svc = null;
+function svc() {
+  if (!_svc) _svc = BlobServiceClient.fromConnectionString(connString());
+  return _svc;
+}
+const _containers = new Map();
+async function getContainer(name) {
+  if (_containers.has(name)) return _containers.get(name);
+  const c = svc().getContainerClient(name);
   await c.createIfNotExists(); // private by default
-  _container = c;
+  _containers.set(name, c);
   return c;
+}
+async function container() {
+  return getContainer(CONTAINER);
 }
 
 // team ids are short slugs; keep them filesystem/URL safe and case-insensitive
@@ -104,18 +113,206 @@ function isPreconditionError(e) {
   );
 }
 
+/* ==========================================================================
+ * Account identity + team membership (Static Web Apps managed auth)
+ * ------------------------------------------------------------------------
+ * SWA injects the signed-in user as the base64-encoded JSON header
+ * `x-ms-client-principal`. We derive a stable per-user id from it. Account
+ * teams carry `ownerId` + `members[]`; legacy passcode teams do not, so the
+ * two models coexist (hybrid).
+ * ======================================================================== */
+function identityFrom(req) {
+  const h = (req && req.headers) || {};
+  const raw = h['x-ms-client-principal'] || h['X-MS-CLIENT-PRINCIPAL'];
+  if (!raw) return null;
+  let p;
+  try {
+    p = JSON.parse(Buffer.from(String(raw), 'base64').toString('utf8'));
+  } catch (e) {
+    return null;
+  }
+  if (!p || !p.userId) return null;
+  return {
+    uid: String(p.userId),
+    provider: p.identityProvider || 'aad',
+    name: p.userDetails || '',
+  };
+}
+
+function isAccountTeam(team) {
+  return !!(team && (team.ownerId || Array.isArray(team.members)));
+}
+function isMember(team, uid) {
+  if (!team || !uid) return false;
+  if (team.ownerId === uid) return true;
+  return Array.isArray(team.members) && team.members.some((m) => m && m.uid === uid);
+}
+function roleOf(team, uid) {
+  if (!team || !uid) return null;
+  if (team.ownerId === uid) return 'owner';
+  const m = (team.members || []).find((x) => x && x.uid === uid);
+  return m ? m.role || 'member' : null;
+}
+
+// Random, collision-checked team id (account teams get generated ids so nobody
+// can squat a friendly slug). Always passes normalizeTeamId().
+function genTeamId() {
+  return 'tm-' + crypto.randomBytes(6).toString('hex'); // e.g. tm-9f3a1c7b0d21
+}
+
+/* -------- Per-user team index: users/<uid>.json = { displayName, teams:[] } ---- */
+const USERS_CONTAINER = 'users';
+async function usersContainer() {
+  return getContainer(USERS_CONTAINER);
+}
+function userKey(uid) {
+  // uid can contain characters unsafe for a blob name; hash it to a stable slug.
+  return crypto.createHash('sha256').update(String(uid), 'utf8').digest('hex') + '.json';
+}
+async function readUser(uid) {
+  const c = await usersContainer();
+  const blob = c.getBlockBlobClient(userKey(uid));
+  try {
+    const dl = await blob.download();
+    const doc = JSON.parse(await streamToString(dl.readableStreamBody));
+    doc._etag = dl.etag;
+    return doc;
+  } catch (e) {
+    if (e.statusCode === 404 || e.code === 'BlobNotFound') return null;
+    throw e;
+  }
+}
+async function writeUser(uid, doc, opts) {
+  const c = await usersContainer();
+  const blob = c.getBlockBlobClient(userKey(uid));
+  const body = JSON.stringify(doc);
+  const conditions = {};
+  if (opts && opts.ifNoneMatch) conditions.ifNoneMatch = opts.ifNoneMatch;
+  if (opts && opts.ifMatch) conditions.ifMatch = opts.ifMatch;
+  const res = await blob.upload(body, Buffer.byteLength(body), {
+    blobHTTPHeaders: { blobContentType: 'application/json' },
+    conditions,
+  });
+  return res.etag;
+}
+// Add a team to a user's index (idempotent) with a small optimistic-retry loop.
+async function addTeamToUser(uid, teamId, meta) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const cur = await readUser(uid);
+    if (!cur) {
+      const doc = { displayName: (meta && meta.displayName) || '', teams: [teamId] };
+      try {
+        await writeUser(uid, doc, { ifNoneMatch: '*' });
+        return;
+      } catch (e) {
+        if (isPreconditionError(e)) continue; // created concurrently → reread
+        throw e;
+      }
+    }
+    if (Array.isArray(cur.teams) && cur.teams.indexOf(teamId) >= 0) return; // already present
+    const doc = {
+      displayName: (meta && meta.displayName) || cur.displayName || '',
+      teams: (cur.teams || []).concat([teamId]),
+    };
+    try {
+      await writeUser(uid, doc, { ifMatch: cur._etag });
+      return;
+    } catch (e) {
+      if (isPreconditionError(e)) continue; // changed under us → retry
+      throw e;
+    }
+  }
+  throw new Error('user_index_contention');
+}
+async function removeTeamFromUser(uid, teamId) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const cur = await readUser(uid);
+    if (!cur || !Array.isArray(cur.teams) || cur.teams.indexOf(teamId) < 0) return;
+    const doc = { displayName: cur.displayName || '', teams: cur.teams.filter((t) => t !== teamId) };
+    try {
+      await writeUser(uid, doc, { ifMatch: cur._etag });
+      return;
+    } catch (e) {
+      if (isPreconditionError(e)) continue;
+      throw e;
+    }
+  }
+  throw new Error('user_index_contention');
+}
+
+/* -------- Invites: invites/<code>.json = { teamId, createdBy, expiresAt } ------ */
+const INVITES_CONTAINER = 'invites';
+async function invitesContainer() {
+  return getContainer(INVITES_CONTAINER);
+}
+async function writeInvite(doc) {
+  const c = await invitesContainer();
+  const body = JSON.stringify(Object.assign({ v: 1, createdAt: new Date().toISOString() }, doc));
+  const bytes = Buffer.byteLength(body);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = newShareCode(10);
+    const blob = c.getBlockBlobClient(code + '.json');
+    try {
+      await blob.upload(body, bytes, {
+        blobHTTPHeaders: { blobContentType: 'application/json' },
+        conditions: { ifNoneMatch: '*' },
+      });
+      return code;
+    } catch (e) {
+      if (isPreconditionError(e)) continue; // collision → new code
+      throw e;
+    }
+  }
+  throw new Error('invite_code_exhausted');
+}
+async function readInvite(code) {
+  const c = await invitesContainer();
+  const blob = c.getBlockBlobClient(code + '.json');
+  try {
+    const dl = await blob.download();
+    return JSON.parse(await streamToString(dl.readableStreamBody));
+  } catch (e) {
+    if (e.statusCode === 404 || e.code === 'BlobNotFound') return null;
+    throw e;
+  }
+}
+
+// Add a member to an account team (idempotent) with an optimistic-retry loop.
+// Bumps the team version so a client mid-edit re-syncs and keeps the new member.
+// Returns the resulting team doc (or null if the team is gone / not an account team).
+async function addMember(teamId, member) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const team = await readTeam(teamId);
+    if (!team || !isAccountTeam(team)) return null;
+    if (isMember(team, member.uid)) return team; // already a member
+    const doc = {
+      version: (team.version || 1) + 1,
+      ownerId: team.ownerId,
+      members: (team.members || []).concat([
+        { uid: member.uid, provider: member.provider || 'aad', role: member.role || 'member', addedAt: new Date().toISOString() },
+      ]),
+      displayName: team.displayName || teamId,
+      data: team.data || null,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await writeTeam(teamId, doc, { ifMatch: team._etag });
+      doc._etag = undefined;
+      return doc;
+    } catch (e) {
+      if (isPreconditionError(e)) continue; // changed under us → retry
+      throw e;
+    }
+  }
+  throw new Error('member_add_contention');
+}
+
 /* -------- Short share links (no passcode) --------
  * One blob per share: shares/<code>.json holding { v, createdAt, payload }.
  * Codes are short base62 tokens; GET is public-read-by-code (unguessable). */
 const SHARES_CONTAINER = 'shares';
-let _shares = null;
 async function sharesContainer() {
-  if (_shares) return _shares;
-  const svc = BlobServiceClient.fromConnectionString(connString());
-  const c = svc.getContainerClient(SHARES_CONTAINER);
-  await c.createIfNotExists(); // private; access is by unguessable code via the API
-  _shares = c;
-  return c;
+  return getContainer(SHARES_CONTAINER);
 }
 
 const SHARE_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -180,4 +377,17 @@ module.exports = {
   writeShare,
   readShare,
   normalizeShareCode,
+  // accounts / membership
+  identityFrom,
+  isAccountTeam,
+  isMember,
+  roleOf,
+  genTeamId,
+  readUser,
+  writeUser,
+  addTeamToUser,
+  removeTeamFromUser,
+  writeInvite,
+  readInvite,
+  addMember,
 };

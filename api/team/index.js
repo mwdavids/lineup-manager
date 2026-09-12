@@ -1,11 +1,16 @@
 'use strict';
 /*
- * GET /api/team?teamId=..      (passcode via x-team-pass header) → { data, version }
- * PUT /api/team { teamId, data, baseVersion }  (passcode via x-team-pass header)
+ * GET /api/team?teamId=..      → { data, version, name?, role? }
+ * PUT /api/team { teamId, data, baseVersion }  → { version }
  *    - baseVersion === current version → save, bump version → { version }
  *    - baseVersion mismatch → 409 { data, version } (latest) so the client can
  *      prompt keep-mine / take-theirs.
  * Optimistic concurrency is enforced by both the numeric version and the blob ETag.
+ *
+ * Authorization is hybrid:
+ *  - Account teams (they carry ownerId/members[]) authorize by the signed-in
+ *    user (Static Web Apps `x-ms-client-principal`) being a member.
+ *  - Legacy teams authorize by the shared passcode (`x-team-pass` header).
  */
 const store = require('../shared/store');
 const throttle = require('../shared/throttle');
@@ -29,11 +34,7 @@ module.exports = async function (context, req) {
   const teamId = store.normalizeTeamId(
     method === 'GET' ? (req.query && req.query.teamId) : (req.body && req.body.teamId)
   );
-  const passcode = passOf(req);
-
   if (!teamId) return json(context, 400, { error: 'invalid_team_id' });
-  if (!passcode) return json(context, 401, { error: 'missing_passcode' });
-  if (throttle.isBlocked(teamId, ip)) return json(context, 429, { error: 'too_many_attempts', message: 'Too many attempts. Wait a few minutes.' });
 
   let team;
   try {
@@ -44,18 +45,35 @@ module.exports = async function (context, req) {
   }
   if (!team) return json(context, 404, { error: 'no_such_team', message: 'No team with that ID. Connect once to create it.' });
 
-  const ok = store.safeEqualHex(team.passHash, store.hashPass(passcode, team.salt));
-  if (!ok) {
-    throttle.recordFail(teamId, ip);
-    return json(context, 401, { error: 'bad_passcode', message: 'Wrong team passcode.' });
+  const identity = store.identityFrom(req);
+
+  // ---- Authorize ----
+  if (store.isAccountTeam(team)) {
+    if (!identity) return json(context, 401, { error: 'login_required', message: 'Sign in to access this team.' });
+    if (!store.isMember(team, identity.uid)) return json(context, 403, { error: 'not_a_member', message: 'You are not a member of this team.' });
+  } else {
+    // Legacy passcode team.
+    const passcode = passOf(req);
+    if (!passcode) return json(context, 401, { error: 'missing_passcode' });
+    if (throttle.isBlocked(teamId, ip)) return json(context, 429, { error: 'too_many_attempts', message: 'Too many attempts. Wait a few minutes.' });
+    const ok = store.safeEqualHex(team.passHash, store.hashPass(passcode, team.salt));
+    if (!ok) {
+      throttle.recordFail(teamId, ip);
+      return json(context, 401, { error: 'bad_passcode', message: 'Wrong team passcode.' });
+    }
+    throttle.recordSuccess(teamId, ip);
   }
-  throttle.recordSuccess(teamId, ip);
 
   if (method === 'GET') {
-    return json(context, 200, { data: team.data || null, version: team.version || 1 });
+    const out = { data: team.data || null, version: team.version || 1 };
+    if (store.isAccountTeam(team)) {
+      out.name = team.displayName || teamId;
+      out.role = store.roleOf(team, identity.uid);
+    }
+    return json(context, 200, out);
   }
 
-  // PUT
+  // ---- PUT ----
   const body = req.body || {};
   const baseVersion = Number(body.baseVersion);
   if (!Number.isFinite(baseVersion)) return json(context, 400, { error: 'missing_base_version' });
@@ -66,13 +84,20 @@ module.exports = async function (context, req) {
     return json(context, 409, { error: 'conflict', data: team.data || null, version: team.version || 1, updatedAt: team.updatedAt || null });
   }
 
+  // Preserve ownership/passcode metadata; only version/data/updatedAt change.
   const doc = {
     version: (team.version || 1) + 1,
-    passHash: team.passHash,
-    salt: team.salt,
     data: body.data,
     updatedAt: new Date().toISOString(),
   };
+  if (store.isAccountTeam(team)) {
+    doc.ownerId = team.ownerId;
+    doc.members = team.members || [];
+    doc.displayName = team.displayName || teamId;
+  } else {
+    doc.passHash = team.passHash;
+    doc.salt = team.salt;
+  }
   try {
     await store.writeTeam(teamId, doc, { ifMatch: team._etag });
   } catch (e) {

@@ -105,10 +105,18 @@ server. Cloud sync just adds an online copy that the app pushes to and pulls fro
 ### How it works
 
 - A tiny **Azure Functions API** (`/api`, Node.js) stores each team's full app state (roster +
-  all game days + settings) as one JSON document in **Azure Blob Storage**, guarded by a
-  **shared team passcode**. The passcode is **hashed (SHA-256 + salt) server-side** and never
+  all game days + settings) as one JSON document in **Azure Blob Storage**. Access is guarded
+  one of two ways: by **Microsoft account membership** (accounts, recommended) or by a **shared
+  team passcode** (legacy). Passcodes are **hashed (SHA-256 + salt) server-side** and never
   stored in plaintext or sent back to the browser; the storage keys stay in the Functions app
   settings and are never shipped to the client.
+- **Accounts** use Static Web Apps' built-in **Microsoft Entra ID** login (free on all plans,
+  no registration). The signed-in user arrives at the Functions as the `x-ms-client-principal`
+  header; account teams carry an `ownerId` + `members[]`, a per-user index lives in a `users`
+  container, and invite codes live in an `invites` container. `GET /api/me` lists your teams,
+  `POST /api/teams` creates one, `POST /api/invite` mints a join link, and `POST /api/accept`
+  redeems it. Legacy passcode teams (no `ownerId`) keep working via `/api/join` + the
+  `x-team-pass` header — the two models coexist.
 - The frontend is served by **Azure Static Web Apps (Free)** with the Functions wired in as its
   managed API. Concurrency uses a version number + ETag: if two coaches edit at once, the
   second save gets a **conflict prompt** ("keep mine / take theirs") instead of silently losing
@@ -171,11 +179,45 @@ When it finishes it prints the **Static Web App URL** (e.g.
 > deploy step doesn't pass `--api-location`, so it would skip the managed Functions. Using the
 > SWA CLI for the deploy step (above) is what reliably ships both the site and the API.
 
-### Connect a team
+### Sign in with a Microsoft account (recommended)
+
+Instead of sharing a team passcode, each coach can **sign in with their own Microsoft
+account** — any personal account (outlook / hotmail / live) or a work/school account. Teams
+and game plans then follow the account across devices, and you invite other coaches by link
+rather than by sharing a secret.
+
+This uses **Static Web Apps' built-in Microsoft Entra ID login**, which is available on **all
+plans including Free** with **no app registration and no secrets** — there is nothing to
+configure in Azure beyond the deploy you already did. (Google/Facebook/email-password would
+each require a *custom* provider, which needs the paid Standard plan; that's why this build is
+Microsoft-only.)
+
+Use it from **Game Setup → Team sync (cloud)**:
+
+1. Tap **🔐 Sign in with Microsoft** and complete the Microsoft sign-in.
+2. **Create a team** (give it a name) or pick one from **Your teams** and tap **Open team**.
+   The first time you open a team, your local roster/games merge into it (you're asked before
+   your roster is replaced), then it stays in sync.
+3. Tap **✉️ Invite coach** to copy an invite link. Send it to another coach (AirDrop, Messages,
+   email). When they open it and sign in, they join the same team. Invite links are valid for
+   ~14 days and can be used by your whole staff.
+4. The status pill still shows **Synced / Syncing / Offline / Conflict**, and everything remains
+   **offline-first** — you only need to be online to sign in or switch teams; the cached team
+   keeps working with no signal on the sideline.
+
+> Account sign-in relies on same-origin auth cookies, so it only works when the app is opened
+> **from your Static Web App URL** (not `file://` or a different host). The legacy passcode
+> mode below still supports the **Server URL** override.
+
+### Connect a team (legacy passcode)
+
+The shared-passcode flow still works and runs **alongside** accounts (hybrid) — existing
+passcode teams keep syncing unchanged. It's now tucked under **"Legacy: connect with a shared
+team passcode"** in the Team sync panel.
 
 1. Open the deployed Static Web App URL.
-2. Go to **Game Setup → Team sync (cloud)**, enter a **Team name/ID** and a **passcode**, and
-   tap **Connect**.
+2. Go to **Game Setup → Team sync (cloud)**, expand the legacy section, enter a **Team name/ID**
+   and a **passcode**, and tap **Connect**.
 3. The **first** device to connect a given team ID **sets** the passcode; everyone else must
    enter the same passcode to join (wrong passcode is rejected). On connect, the app merges the
    server's data with your local roster/games (asking before replacing your roster), reusing

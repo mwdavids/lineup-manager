@@ -347,9 +347,46 @@
         <h2 style="margin:0">Team sync (cloud) <span id="syncPill" class="pill s-off">Not connected</span></h2>
         <button type="button" class="info" data-info="Optional. Connect a Team ID + shared passcode to keep this device in sync with other coaches over the internet. Leave it off to stay fully local — the app works exactly the same offline.">ⓘ</button>
       </div>
-      <div class="muted small" style="margin:6px 0 10px">Optional cloud sync so you, another coach, and your iPad share the same roster + games. The app still works fully offline on the sideline; changes upload when you’re back online. Needs the app opened from your team’s synced site (or set a Server URL below).</div>
-      <div id="syncDisconnected">
-        <div class="row">
+      <div class="muted small" style="margin:6px 0 10px">Optional cloud sync so you, another coach, and your iPad share the same roster + games. <b>Sign in with a Microsoft account</b> and your teams follow you across devices — no passcode to share. The app still works fully offline on the sideline; changes upload when you’re back online.</div>
+
+      <!-- Account sign-in (Microsoft) -->
+      <div id="syncAccount">
+        <div id="syncSignedOut" class="hidden">
+          <div class="row" style="align-items:center">
+            <button class="btn grow" id="syncLoginBtn">🔐 Sign in with Microsoft</button>
+            <button type="button" class="info" data-info="Sign in with a Microsoft account (outlook / hotmail / live, or a work / school account). Your teams and game plans follow your account across devices — no shared passcode needed.">ⓘ</button>
+          </div>
+        </div>
+        <div id="syncSignedIn" class="hidden">
+          <div class="row small" style="justify-content:space-between;align-items:center">
+            <span id="syncWhoami" class="muted"></span>
+            <button class="btn sec sm" id="syncLogoutBtn">Sign out</button>
+          </div>
+          <div id="syncTeamsWrap" style="margin-top:8px">
+            <label class="fld grow">Your teams
+              <select id="syncTeamsSel"></select>
+            </label>
+            <div class="row" style="margin-top:6px">
+              <button class="btn grow" id="syncOpenTeamBtn">Open team</button>
+              <button type="button" class="info" data-info="Loads the selected team into this device and keeps it in sync. Your local roster/games merge in the first time you open a team.">ⓘ</button>
+            </div>
+          </div>
+          <details style="margin-top:8px">
+            <summary class="muted small" style="cursor:pointer">➕ Create a new team</summary>
+            <div class="row" style="margin-top:6px">
+              <label class="fld grow">Team name
+                <input id="syncNewTeamName" placeholder="e.g. Thunder U13" autocomplete="off" />
+              </label>
+              <button class="btn sm" id="syncCreateTeamBtn">Create</button>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <!-- Legacy: shared team passcode (no account) -->
+      <details id="syncDisconnected" style="margin-top:10px">
+        <summary class="muted small" style="cursor:pointer">Legacy: connect with a shared team passcode (no account)</summary>
+        <div class="row" style="margin-top:6px">
           <label class="fld grow">Team ID
             <input id="syncTeam" placeholder="e.g. thunder-u13" autocapitalize="none" autocomplete="off" spellcheck="false" />
           </label>
@@ -367,13 +404,14 @@
           <button class="btn grow" id="syncConnectBtn">🔗 Connect team</button>
           <button type="button" class="info" data-info="Joins the team: the first device to connect sets the shared passcode; others must match it. On connect, your local roster + games merge with the team’s.">ⓘ</button>
         </div>
-      </div>
+      </details>
       <div id="syncConnected" class="hidden">
         <div class="small" id="syncInfoLine" style="margin-bottom:8px"></div>
         <div class="row">
           <button class="btn sec sm" id="syncNowBtn">🔄 Sync now</button>
+          <button class="btn sec sm hidden" id="syncInviteBtn">✉️ Invite coach</button>
           <button class="btn bad sm" id="syncDisconnectBtn">Disconnect</button>
-          <button type="button" class="info" data-info="Sync now pushes your changes and pulls others’ right away. Disconnect stops syncing on this device but keeps all your data locally.">ⓘ</button>
+          <button type="button" class="info" data-info="Sync now pushes your changes and pulls others’ right away. Invite coach makes a link that lets another signed-in coach join this team. Disconnect stops syncing on this device but keeps all your data locally.">ⓘ</button>
         </div>
       </div>
     </div>
@@ -2441,9 +2479,11 @@ function initInfo(){
    ============================================================ */
 var LS_SYNC = 'lineupManager.sync.v1';
 var Sync = {
-  teamId:null, passcode:null, endpoint:'', baseVersion:0,
+  mode:'passcode', teamId:null, teamName:'', role:null,
+  passcode:null, endpoint:'', baseVersion:0,
   connected:false, status:'off', dirty:false, busy:false,
-  lastSyncAt:0, lastError:'', _applying:false, _pushT:null, _pollT:null
+  lastSyncAt:0, lastError:'', _applying:false, _pushT:null, _pollT:null,
+  account:{ checked:false, loggedIn:false, user:null, teams:[] }
 };
 
 function syncOnline(){ try{ return navigator.onLine!==false; }catch(e){ return true; } }
@@ -2453,16 +2493,18 @@ function syncLoadConfig(){
     var raw=localStorage.getItem(LS_SYNC);
     if(!raw) return;
     var c=JSON.parse(raw);
-    Sync.teamId=c.teamId||null; Sync.passcode=c.passcode||null;
+    Sync.mode=c.mode||'passcode';
+    Sync.teamId=c.teamId||null; Sync.teamName=c.teamName||''; Sync.passcode=c.passcode||null;
     Sync.endpoint=c.endpoint||''; Sync.baseVersion=c.baseVersion||0;
-    Sync.connected=!!(c.teamId&&c.passcode);
+    Sync.connected = !!(c.teamId && (Sync.mode==='account' || c.passcode));
   }catch(e){}
 }
 function syncSaveConfig(){
   try{
     if(!Sync.connected){ localStorage.removeItem(LS_SYNC); return; }
     localStorage.setItem(LS_SYNC, JSON.stringify({
-      teamId:Sync.teamId, passcode:Sync.passcode, endpoint:Sync.endpoint, baseVersion:Sync.baseVersion
+      mode:Sync.mode, teamId:Sync.teamId, teamName:Sync.teamName,
+      passcode:(Sync.mode==='account'?null:Sync.passcode), endpoint:Sync.endpoint, baseVersion:Sync.baseVersion
     }));
   }catch(e){}
 }
@@ -2521,13 +2563,46 @@ function renderSyncUI(){
   pill.textContent = (Sync.status==='synced' && Sync.lastSyncAt) ? ('Synced · '+timeAgo(Sync.lastSyncAt)) : label;
   var dis=document.getElementById('syncDisconnected'), con=document.getElementById('syncConnected');
   if(dis&&con){ dis.classList.toggle('hidden', Sync.connected); con.classList.toggle('hidden', !Sync.connected); }
+  var inv=document.getElementById('syncInviteBtn');
+  if(inv) inv.classList.toggle('hidden', !(Sync.connected && Sync.mode==='account'));
+  accRenderUI();
   var line=document.getElementById('syncInfoLine');
   if(line && Sync.connected){
     var extra = Sync.status==='offline' ? ' · offline — will sync when back online'
       : Sync.status==='conflict' ? ' · conflict — choose keep/take on next change'
       : Sync.status==='error' && Sync.lastError ? (' · '+Sync.lastError)
       : Sync.dirty ? ' · unsynced changes' : (Sync.lastSyncAt?(' · synced '+timeAgo(Sync.lastSyncAt)):'');
-    line.innerHTML='Team <b>'+syncEsc(Sync.teamId)+'</b> · v'+Sync.baseVersion+syncEsc(extra);
+    var teamLabel = (Sync.mode==='account' && Sync.teamName) ? Sync.teamName : Sync.teamId;
+    line.innerHTML='Team <b>'+syncEsc(teamLabel)+'</b> · v'+Sync.baseVersion+syncEsc(extra);
+  }
+}
+
+// Render the Microsoft-account panel (sign-in state + "your teams" picker).
+function accRenderUI(){
+  var out=document.getElementById('syncSignedOut'), inn=document.getElementById('syncSignedIn');
+  if(!out||!inn) return;
+  var a=Sync.account;
+  out.classList.toggle('hidden', a.loggedIn);
+  inn.classList.toggle('hidden', !a.loggedIn);
+  if(!a.loggedIn) return;
+  var who=document.getElementById('syncWhoami');
+  if(who) who.textContent='Signed in as '+(a.user&&a.user.name?a.user.name:'your account');
+  var sel=document.getElementById('syncTeamsSel'), wrap=document.getElementById('syncTeamsWrap');
+  if(sel){
+    var prev=sel.value;
+    sel.innerHTML='';
+    if(!a.teams.length){
+      if(wrap) wrap.classList.add('hidden');
+    } else {
+      if(wrap) wrap.classList.remove('hidden');
+      a.teams.forEach(function(t){
+        var o=document.createElement('option');
+        o.value=t.id; o.textContent=t.name+(t.role==='owner'?' (owner)':'');
+        sel.appendChild(o);
+      });
+      var want=(Sync.mode==='account'&&Sync.teamId)?Sync.teamId:prev;
+      if(want) sel.value=want;
+    }
   }
 }
 
@@ -2552,6 +2627,7 @@ async function syncConnect(teamId, passcode, endpoint){
   if(r.status===429){ syncSetStatus('off'); toast('Too many attempts — wait a few minutes'); return false; }
   if(r.status!==200 || !r.data){ syncSetStatus('off'); toast((r.data&&r.data.message)||'Could not connect'); return false; }
 
+  Sync.mode='passcode';
   Sync.teamId=teamId; Sync.passcode=passcode; Sync.connected=true;
   if(r.data.data){
     // Team already has data — merge it into local, then push the union up.
@@ -2573,13 +2649,129 @@ async function syncConnect(teamId, passcode, endpoint){
 function syncDisconnect(){
   syncStopPoll();
   if(Sync._pushT){ clearTimeout(Sync._pushT); Sync._pushT=null; }
-  Sync.connected=false; Sync.teamId=null; Sync.passcode=null; Sync.baseVersion=0; Sync.dirty=false;
+  Sync.connected=false; Sync.teamId=null; Sync.teamName=''; Sync.role=null; Sync.passcode=null;
+  Sync.mode='passcode'; Sync.baseVersion=0; Sync.dirty=false;
   syncSaveConfig();
   syncSetStatus('off');
   toast('Disconnected — your data stays on this device');
 }
 
-function syncHeaders(){ return {'x-team-pass': Sync.passcode||''}; }
+/* ---------- Microsoft account mode ---------- */
+// Same as syncFetch but relies on the SWA auth cookie (no passcode header).
+async function accFetch(path, opts){
+  opts=opts||{};
+  var headers=Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+  var res=await fetch(syncApiBase()+path, {method:opts.method||'GET', headers:headers, credentials:'same-origin', body:opts.body?JSON.stringify(opts.body):undefined});
+  var data=null; try{ data=await res.json(); }catch(e){}
+  return {status:res.status, data:data};
+}
+function accLoginUrl(){
+  var back=location.pathname+location.search;
+  return '/.auth/login/aad?post_login_redirect_uri='+encodeURIComponent(back);
+}
+function accSignIn(){ location.href=accLoginUrl(); }
+function accSignOut(){ location.href='/.auth/logout?post_logout_redirect_uri='+encodeURIComponent(location.pathname); }
+
+// Detect whether the user is signed in (via SWA) and load their teams.
+async function accCheckAuth(){
+  var a=Sync.account;
+  if(!syncOnline()){ a.checked=true; renderSyncUI(); return; }
+  try{
+    var res=await fetch('/.auth/me', {credentials:'same-origin'});
+    var j=await res.json();
+    var cp=j&&(j.clientPrincipal||j.ClientPrincipal||null);
+    a.loggedIn=!!cp;
+    if(cp){ a.user={ uid:cp.userId, name:cp.userDetails||'', provider:cp.identityProvider||'aad' }; }
+  }catch(e){ a.loggedIn=false; }
+  a.checked=true;
+  if(a.loggedIn){ await accLoadTeams(); }
+  renderSyncUI();
+}
+async function accLoadTeams(){
+  try{
+    var r=await accFetch('/me');
+    if(r.status===200 && r.data){
+      Sync.account.teams=r.data.teams||[];
+      if(r.data.user) Sync.account.user=r.data.user;
+    }
+  }catch(e){}
+  renderSyncUI();
+}
+async function accCreateTeam(name){
+  if(!Sync.account.loggedIn){ toast('Sign in first'); return; }
+  var r;
+  try{ r=await accFetch('/teams',{method:'POST',body:{name:name}}); }
+  catch(e){ toast('Could not reach the server'); return; }
+  if(r.status!==200 || !r.data || !r.data.teamId){ toast((r.data&&r.data.message)||'Could not create team'); return; }
+  await accLoadTeams();
+  toast('Team “'+(r.data.name||'team')+'” created');
+  await accOpenTeam(r.data.teamId, r.data.name);
+}
+// Open an account team: pull it, merge local in the first time, then push + poll.
+async function accOpenTeam(teamId, teamName){
+  if(!Sync.account.loggedIn){ toast('Sign in first'); return false; }
+  // Switch away from any current connection first.
+  if(Sync.connected){ syncStopPoll(); if(Sync._pushT){ clearTimeout(Sync._pushT); Sync._pushT=null; } }
+  Sync.mode='account'; Sync.endpoint=''; Sync.teamId=teamId; Sync.teamName=teamName||teamId;
+  Sync.passcode=null; Sync.connected=true;
+  syncSetStatus('syncing');
+  var r;
+  try{ r=await accFetch('/team?teamId='+encodeURIComponent(teamId)); }
+  catch(e){ syncSetStatus('error','Could not reach the server'); return false; }
+  if(r.status===401){ Sync.connected=false; toast('Please sign in again'); accSignIn(); return false; }
+  if(r.status===403){ Sync.connected=false; syncSetStatus('off'); toast('You are not a member of that team'); return false; }
+  if(r.status!==200 || !r.data){ Sync.connected=false; syncSetStatus('off'); toast((r.data&&r.data.message)||'Could not open team'); return false; }
+  if(r.data.name) Sync.teamName=r.data.name;
+  if(r.data.role) Sync.role=r.data.role;
+  if(r.data.data){
+    var doMerge = (typeof confirm!=='function') ? true : confirm('This team already has saved data.\n\nOK = merge it with what’s on this device (recommended).\nCancel = keep only this device’s data and overwrite the team.');
+    if(doMerge) syncMergeIn(r.data.data);
+    Sync.baseVersion=r.data.version;
+  } else {
+    Sync.baseVersion=r.data.version||1;
+  }
+  syncSaveConfig();
+  Sync.dirty=true;                 // push our (merged) state up
+  await syncPush();
+  syncStartPoll();
+  toast('Team “'+Sync.teamName+'” connected');
+  return true;
+}
+async function accInvite(){
+  if(Sync.mode!=='account' || !Sync.teamId){ toast('Open an account team first'); return; }
+  var r;
+  try{ r=await accFetch('/invite',{method:'POST',body:{teamId:Sync.teamId}}); }
+  catch(e){ toast('Could not reach the server'); return; }
+  if(r.status!==200 || !r.data || !r.data.code){ toast((r.data&&r.data.message)||'Could not create invite'); return; }
+  var link=location.origin+'/?join='+encodeURIComponent(r.data.code);
+  try{ await navigator.clipboard.writeText(link); toast('Invite link copied — send it to your coach'); }
+  catch(e){ if(typeof prompt==='function') prompt('Copy this invite link and send it to your coach:', link); else toast('Invite link: '+link); }
+}
+// Redeem a ?join=<code> invite deep link on load.
+async function accAcceptFromUrl(){
+  var m=/[?&]join=([^&]+)/.exec(location.search||'');
+  if(!m) return false;
+  var code=decodeURIComponent(m[1]);
+  // Clean the URL either way so a refresh doesn't re-trigger.
+  try{ history.replaceState(null,'',location.pathname); }catch(e){}
+  if(!Sync.account.loggedIn){
+    if(typeof confirm!=='function' || confirm('You were invited to a team. Sign in with Microsoft to join?')){
+      // Preserve the code across login so it can be redeemed afterward.
+      try{ sessionStorage.setItem('lm.pendingJoin', code); }catch(e){}
+      accSignIn();
+    }
+    return true;
+  }
+  var r;
+  try{ r=await accFetch('/accept',{method:'POST',body:{code:code}}); }
+  catch(e){ toast('Could not reach the server'); return true; }
+  if(r.status!==200 || !r.data || !r.data.teamId){ toast((r.data&&r.data.message)||'That invite link is invalid or expired'); return true; }
+  await accLoadTeams();
+  await accOpenTeam(r.data.teamId, r.data.name);
+  return true;
+}
+
+function syncHeaders(){ return Sync.mode==='account' ? {} : {'x-team-pass': Sync.passcode||''}; }
 
 function syncOnLocalChange(){
   Sync.dirty=true;
@@ -2660,15 +2852,38 @@ function initSync(){
   };
   var db=document.getElementById('syncDisconnectBtn'); if(db) db.onclick=syncDisconnect;
   var nb=document.getElementById('syncNowBtn'); if(nb) nb.onclick=function(){ if(Sync.dirty) syncPush(); else syncPull(); };
+  // account buttons
+  var lb=document.getElementById('syncLoginBtn'); if(lb) lb.onclick=accSignIn;
+  var lo=document.getElementById('syncLogoutBtn'); if(lo) lo.onclick=accSignOut;
+  var ct=document.getElementById('syncCreateTeamBtn'); if(ct) ct.onclick=function(){ accCreateTeam((document.getElementById('syncNewTeamName')||{}).value||''); };
+  var op=document.getElementById('syncOpenTeamBtn'); if(op) op.onclick=function(){
+    var sel=document.getElementById('syncTeamsSel'); if(!sel||!sel.value){ toast('Pick a team first'); return; }
+    var t=(Sync.account.teams||[]).filter(function(x){return x.id===sel.value;})[0];
+    accOpenTeam(sel.value, t?t.name:'');
+  };
+  var ib=document.getElementById('syncInviteBtn'); if(ib) ib.onclick=accInvite;
   window.addEventListener('online', function(){ if(Sync.connected){ if(Sync.dirty) syncPush(); else syncPull(); } });
   window.addEventListener('offline', function(){ if(Sync.connected) syncSetStatus('offline'); });
   if(Sync.connected){
-    var t=document.getElementById('syncTeam'); if(t) t.value=Sync.teamId||'';
+    var t=document.getElementById('syncTeam'); if(t && Sync.mode==='passcode') t.value=Sync.teamId||'';
     var e=document.getElementById('syncEndpoint'); if(e) e.value=Sync.endpoint||'';
     syncSetStatus(syncOnline()?'syncing':'offline');
     syncPull();          // pull others' changes on open
     syncStartPoll();
   }
+  // Detect Microsoft sign-in, load teams, then handle any pending/URL invite.
+  accCheckAuth().then(function(){
+    var pending=null; try{ pending=sessionStorage.getItem('lm.pendingJoin'); }catch(e){}
+    if(pending && Sync.account.loggedIn){
+      try{ sessionStorage.removeItem('lm.pendingJoin'); }catch(e){}
+      accFetch('/accept',{method:'POST',body:{code:pending}}).then(function(r){
+        if(r.status===200 && r.data && r.data.teamId){ accLoadTeams().then(function(){ accOpenTeam(r.data.teamId, r.data.name); }); }
+        else { toast((r.data&&r.data.message)||'That invite link is invalid or expired'); }
+      });
+    } else {
+      accAcceptFromUrl();
+    }
+  });
   // keep the "x ago" label fresh
   setInterval(function(){ if(Sync.connected && (Sync.status==='synced')) renderSyncUI(); }, 15000);
 }
@@ -2700,7 +2915,8 @@ window.__LM__ = {
   shareUrl:shareUrl, routeImport:routeImport, checkHashImport:checkHashImport,
   loadSharedCode:loadSharedCode, buildPrintView:buildPrintView,
   parseImportText:parseImportText, currentGame:currentGame, save:save,
-  Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase
+  Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase,
+  accCheckAuth:accCheckAuth, accLoadTeams:accLoadTeams, accCreateTeam:accCreateTeam, accOpenTeam:accOpenTeam, accInvite:accInvite
 };
 </script>
 </body>
