@@ -476,6 +476,7 @@
         <button class="btn" id="startBtn">▶ Start</button>
         <button class="btn sec" id="pauseBtn">⏸ Pause</button>
         <button class="btn sec" id="resetBtn">↺ Reset</button>
+        <button class="btn sec" id="prevBtn">⏮ Prev period</button>
         <button class="btn" id="nextBtn">⏭ Next period</button>
       </div>
     </div>
@@ -1801,6 +1802,19 @@ function renderSubCard(g, gi){
     if(!c.on) r.appendChild(el('span','muted','(empty)'));
     card.appendChild(r);
   });
+  var logged=subsLoggedFor(g, gi+1);
+  var actions=el('div','subrow');
+  if(logged){
+    var d=new Date(logged.at);
+    var hh=d.getHours(), mm=d.getMinutes();
+    actions.appendChild(el('span','on','✅ Subs made at '+(hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm));
+  } else {
+    var btn=el('button','btn sm','✅ Subs made');
+    btn.type='button';
+    btn.onclick=ackSubs;
+    actions.appendChild(btn);
+  }
+  card.appendChild(actions);
   host.appendChild(card);
 }
 
@@ -1851,10 +1865,46 @@ function pauseTimer(){ timer.running=false; clearInterval(timer.handle); }
 function resetTimer(){ pauseTimer(); initClock(); }
 function nextPeriod(){
   var g=currentGame(); if(!g) return;
+  if(!g.live) g.live={period:0};
   pauseTimer();
   if(g.live.period < g.plan.segments[g.plan.segments.length-1].period){ g.live.period++; save(); }
   else { toast('Last period'); }
   initClock();
+}
+function prevPeriod(){
+  var g=currentGame(); if(!g) return;
+  if(!g.live) g.live={period:0};
+  pauseTimer();
+  if((g.live.period||0) > 0){ g.live.period--; save(); }
+  else { toast('First period'); }
+  initClock();
+}
+// Acknowledge that the subs shown on the live card have been made:
+// record a timestamped log entry and advance to the next sub window
+// (or the next period when this is the last window of the period).
+function ackSubs(){
+  var g=currentGame(); if(!g||!g.plan||!g.plan.segments) return;
+  if(!g.live) g.live={period:0};
+  var gi=currentLiveSeg();
+  var to=gi+1;
+  if(to>=g.plan.segments.length){ toast('No more subs'); return; }
+  g.live.subLog = g.live.subLog||[];
+  if(!g.live.subLog.some(function(e){return e.toGi===to;})){
+    g.live.subLog.push({ toGi:to, at:Date.now() });
+  }
+  var segs=periodSegs(g, currentLivePeriod());
+  if(timer.segLocal < segs.length-1){
+    timer.segLocal++; timer.seg=segs[timer.segLocal].gi;
+    save(); renderLive();
+  } else {
+    nextPeriod(); // last window of the period -> roll into the next period
+  }
+  toast('✅ Subs made');
+}
+function subsLoggedFor(g, to){
+  if(!g.live || !g.live.subLog) return null;
+  for(var i=0;i<g.live.subLog.length;i++){ if(g.live.subLog[i].toGi===to) return g.live.subLog[i]; }
+  return null;
 }
 
 /* Alerts: sound + vibration + on-screen card */
@@ -2420,6 +2470,7 @@ function wire(){
   document.getElementById('pauseBtn').onclick=pauseTimer;
   document.getElementById('resetBtn').onclick=resetTimer;
   document.getElementById('nextBtn').onclick=nextPeriod;
+  document.getElementById('prevBtn').onclick=prevPeriod;
   document.getElementById('markOutBtn').onclick=openMarkOut;
 
   var pv=document.getElementById('pitchPreview');
