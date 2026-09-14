@@ -75,7 +75,7 @@ control; nothing is ever uploaded to a server.
    **🔗 Share game link**. The link is copied to your clipboard and shown so you can select it.
 2. Send it to your other device however you like — **AirDrop, email, Messages, or Notes**.
 3. Open the link on the iPad. The app asks **"Load shared game?"**; confirm, and the game —
-   its periods/minutes/sub-interval, availability, the full plan, and the pitch map — is added
+   its duration/substitutions, availability, the full plan, and the pitch map — is added
    to that device's **Saved games** and opened. Nothing you already had is overwritten.
 
 **Short vs. long links.** When the app can reach the internet it stores the game server-side
@@ -254,16 +254,18 @@ note at the top.)
 
 ### Game Setup tab
 - Create and name a game day.
-- Set **periods (halves)**, **minutes per period**, and the **substitution interval** — the
-  live total (e.g. **70 min**) updates as you type, and the sub windows per period are shown.
-- **Default: 2 × 35 min = 70 min, quarter-based subs (~18-min windows).** The sub interval
-  seeds to half the period length (35 → 18), so each half is split in two — sub windows at the
-  quarter mark (~17–18') and at halftime — giving **4 roughly equal playing segments** across
-  the game. One-tap **presets** for 70 min (2×35), 60 min (2×30), and 4×12.
-- **Substitution interval / rolling subs:** rec soccer allows rolling subs, so instead of only
-  subbing at halftime the planner opens a sub window every N minutes *within* each half (the
-  default 35-min half at 18 min → windows of 18/17). Lower it for more frequent rotation. This
-  is what keeps minutes near-equal and the keeper getting outfield time even with long halves.
+- Set **match duration** (total minutes) and the **number of substitutions** — the live total
+  updates as you type, and the sub windows per half are shown. Two halves are always assumed
+  (universal for soccer), so the half length is simply the duration split in two.
+- **Default: 70 min, 3 substitutions.** The substitutions are distributed across the match as
+  **rolling sub windows** (`windows = subs + 1`, with halftime counting as one rotation), so a
+  70-min / 3-sub game becomes **4 roughly equal playing segments** — the earlier half takes any
+  extra window when the split is uneven. One-tap **presets** for 70 min / 3 subs, 60 min /
+  3 subs, and 50 min / 5 subs.
+- **Rolling subs:** rec soccer allows rolling subs, so instead of only subbing at halftime the
+  planner opens the requested number of sub windows *across* the match. Ask for more
+  substitutions for more frequent rotation. This is what keeps minutes near-equal and the
+  keeper getting outfield time even with long halves.
 - Toggle each player available/unavailable **for that game**.
 - **Generate Plan** builds the lineup.
 - Saved games list: open, duplicate, or delete prior game days.
