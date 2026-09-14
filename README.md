@@ -18,9 +18,23 @@ your existing roster maps cleanly without relabelling anyone.
 
 ## What it does
 
-- Manages your roster (foot + up to three positions per player).
-- Builds a fair, explainable lineup plan for a 4-3-3 with **rolling substitution windows**.
-- Runs a live sideline timer with loud substitution alerts at every sub window.
+- Manages your roster (foot + up to three positions per player, plus optional
+  **minutes preference**, **avoid-GK**, and **skill rating** flags).
+- Builds a fair, explainable lineup plan for a 4-3-3 with **rolling substitution windows**,
+  tunable per game with **GK fairness** and **stability** preferences.
+- **Balances lineup strength across sub windows.** Give players an optional skill rating
+  (Developing / Solid / Strong) and the planner spreads strong and developing players so no
+  single window is very weak — balancing **each line (defense, midfield, attack) on its own**
+  so a strong total can't hide a weak back line — without changing anyone's total minutes.
+  It also enforces **rest fairness**, keeping players off the bench for two windows in a row
+  wherever possible. A per-window strength readout flags any lineup that's weaker than usual.
+- **Repairs the plan in place when availability changes last-minute** — a "Repair plan"
+  banner appears when someone you'd planned for goes out (or a player comes back in), and
+  fixes only what's needed instead of reshuffling the whole lineup.
+- **Preserves your manual edits.** Hand-tweaked substitutions are remembered, previewed
+  before/after any repair or regenerate, and can be kept when you regenerate the rest.
+- Runs a live sideline timer with loud substitution alerts at every sub window, plus a
+  reminder to start the clock at kickoff.
 - Works with no internet, no account, and no other device.
 
 ## How to open it on an iPad

@@ -171,6 +171,8 @@
   .clock{font-variant-numeric:tabular-nums;font-weight:800;font-size:clamp(64px,18vw,150px);text-align:center;line-height:1;letter-spacing:2px}
   .clock.warn{color:var(--warn)} .clock.done{color:var(--bad)}
   .subcard{border:3px solid var(--warn);border-radius:16px;padding:14px;background:#fff7ec;margin-bottom:12px;animation:pulse 1s infinite}
+  .repairbar{border:2px solid var(--warn);background:#fff7ec;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-weight:700;font-size:14px}
+  .starthint{color:var(--accent-d);font-weight:800;font-size:15px;text-align:center;margin-top:10px;padding:8px 10px;border:2px dashed var(--accent);border-radius:12px;animation:pulse 1.4s infinite}
   @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(201,120,31,.4)}50%{box-shadow:0 0 0 10px rgba(201,120,31,0)}}
   .subrow{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;padding:6px 0;border-bottom:1px dashed var(--line);flex-wrap:wrap}
   .subrow:last-child{border-bottom:none}
@@ -312,9 +314,38 @@
         </div>
       </div>
       <div class="availgrid" id="availGrid" style="margin-top:10px"></div>
+      <div id="availRepair" class="repairbar" style="display:none;margin-top:12px"></div>
       <div class="row" style="margin-top:14px">
         <button class="btn grow" id="generateBtn">⚙️ Generate Plan</button>
       </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin:0 0 4px">Plan preferences</h2>
+      <div class="muted small" style="margin-bottom:10px">Steer how the planner balances the team. Applied on the next Generate / Repair.</div>
+      <label class="fld small">Keeper's outfield time
+        <button type="button" class="info" data-info="How much of the game your keepers also play out of goal. Balanced keeps them involved; Rest more gives keepers a lighter total.">ⓘ</button>
+      </label>
+      <select id="gkFairSel">
+        <option value="0.85">Balanced (default)</option>
+        <option value="1">Equal — keepers play a full share outfield</option>
+        <option value="0.6">Rest more — lighter total for keepers</option>
+      </select>
+      <label class="fld small" style="margin-top:10px">Position stability
+        <button type="button" class="info" data-info="How strongly the planner keeps players in the same position between windows. Higher = fewer position changes; Lower = more rotation.">ⓘ</button>
+      </label>
+      <select id="stabilitySel">
+        <option value="1">Normal (default)</option>
+        <option value="1.6">High — keep positions steady</option>
+        <option value="0.5">Low — rotate positions more</option>
+      </select>
+      <label class="fld small" style="margin-top:10px">Strength balancing
+        <button type="button" class="info" data-info="Spreads strong and developing players across sub windows so no single lineup is very weak. Uses each player’s optional skill rating from the roster and never changes anyone’s total minutes. Has no effect until you rate players.">ⓘ</button>
+      </label>
+      <select id="balanceSel">
+        <option value="auto">On when players are rated (default)</option>
+        <option value="off">Off</option>
+      </select>
     </div>
 
     <div class="panel">
@@ -429,7 +460,7 @@
         <button class="btn sec sm" id="genRestBtn">▶️ Generate rest</button>
         <button type="button" class="info" data-info="Auto-fills the remaining sub windows around your pinned cells, balancing minutes, GK time, and positions.">ⓘ</button>
         <button class="btn sec sm" id="regenBtn">Regenerate</button>
-        <button type="button" class="info" data-info="Rebuilds the ENTIRE plan from scratch — clears all pins and manual edits.">ⓘ</button>
+        <button type="button" class="info" data-info="Rebuilds the plan from scratch. If you have pinned or hand-edited cells, it asks whether to keep them or clear everything.">ⓘ</button>
         <button class="btn sm" id="lockBtn">Lock plan</button>
         <button type="button" class="info" data-info="Freezes the whole plan so it won’t be regenerated or auto-changed.">ⓘ</button>
       </div>
@@ -479,6 +510,7 @@
         <button class="btn sec" id="prevBtn">⏮ Prev period</button>
         <button class="btn" id="nextBtn">⏭ Next period</button>
       </div>
+      <div id="startHint" class="starthint" style="display:none">👆 Don’t forget — tap <b>Start</b> to run the clock</div>
     </div>
 
     <div id="subCardWrap"></div>
@@ -691,6 +723,99 @@ function footMismatch(player, slot){
   if(slot.side==='L' && player.foot==='R') return true;
   return false;
 }
+// Optional per-player skill: 1 Developing, 2 Solid, 3 Strong. Unset -> 2 (average),
+// so the planner treats un-rated players as neutral and behaviour is unchanged
+// until the coach rates at least a couple of players.
+function skillOf(id){ var p=byId(id); var s=p&&p.skill; return (s===1||s===2||s===3)? s : 2; }
+function rosterHasSkills(list){
+  var seen=null;
+  for(var i=0;i<list.length;i++){ var s=list[i]&&list[i].skill; if(s===1||s===2||s===3){ if(seen===null) seen=s; else if(seen!==s) return true; } }
+  return false;
+}
+// Skill of the on-field players across a chosen SET of slot keys (a line), one window.
+function groupStrength(seg, keys){
+  var s=0; for(var i=0;i<keys.length;i++){ var pid=seg.slots[keys[i]]; if(pid) s+=skillOf(pid); } return s;
+}
+// Whole-outfield skill for one window (used by the plan-table strength readout).
+function segStrength(seg){
+  var s=0; OUTFIELD_SLOTS.forEach(function(sl){ var pid=seg.slots[sl.key]; if(pid) s+=skillOf(pid); }); return s;
+}
+function onFieldSet(seg){ var o={}; SLOTS.forEach(function(sl){ var pid=seg.slots[sl.key]; if(pid) o[pid]=true; }); return o; }
+// Cross-window exchange balancer for ONE group of slots (a line). Preserves every
+// player's total minutes AND keeps them within the same group of positions: it swaps an
+// on-field player p in a weaker window A with a benched-in-A player q who is on the field
+// in a stronger window B (with p benched in B), so both keep the same number of windows
+// and only strength moves — from the strong window toward the weak one. Squared-deviation
+// objective (never overshoots); deterministic + capped.
+function balanceGroup(segments, idx, keys, lockedAt, movable){
+  if(idx.length<2 || keys.length<1) return;
+  var L=segments.length;
+  for(var pass=0; pass<12; pass++){
+    // full on-field map for EVERY window (fixed + planned) — needed so the rest
+    // guard below can measure consecutive-bench runs across the whole timeline.
+    var full=[]; for(var fi=0; fi<L; fi++) full.push(onFieldSet(segments[fi]));
+    var S={};
+    idx.forEach(function(i){ S[i]=groupStrength(segments[i],keys); });
+    // Max consecutive benched-window run for a player, with windows A/B overridden
+    // to the given on-field states (used to compare a candidate swap vs. the status quo).
+    function benchRun(id, A, aOn, B, bOn){
+      var mx=0, c=0;
+      for(var i=0;i<L;i++){
+        var on = (i===A)? aOn : (i===B)? bOn : !!full[i][id];
+        if(on) c=0; else { c++; if(c>mx) mx=c; }
+      }
+      return mx;
+    }
+    var best=null;
+    for(var a=0;a<idx.length;a++){
+      for(var b=0;b<idx.length;b++){
+        if(a===b) continue;
+        var A=idx[a], B=idx[b];
+        if(S[A]>=S[B]) continue;                 // only move strength INTO the weaker window
+        for(var ka=0; ka<keys.length; ka++){
+          var kA=keys[ka]; if(lockedAt(A,kA)) continue;
+          var p=segments[A].slots[kA]; if(!p || !movable(p)) continue;
+          for(var kb=0; kb<keys.length; kb++){
+            var kB=keys[kb]; if(lockedAt(B,kB)) continue;
+            var q=segments[B].slots[kB]; if(!q || q===p || !movable(q)) continue;
+            var d=skillOf(q)-skillOf(p); if(d<=0) continue;
+            if(full[A][q] || full[B][p]) continue;           // keep each player's total windows fixed
+            if(slotEligRank(byId(q),SLOT_BY_KEY[kA])<0 || slotEligRank(byId(p),SLOT_BY_KEY[kB])<0) continue;
+            var gain = 2*d*(S[B]-S[A]) - 2*d*d;              // old − new sum-of-squares; >0 improves w/o overshoot
+            if(gain<=1e-9 || (best && gain<=best.gain)) continue;
+            // PRIORITY 2 rest guard: the swap flips p (on A→off, off B→on) and q
+            // (off A→on, on B→off). Keep either player's worst back-to-back bench run
+            // within a small cap (two short windows) so strength balancing can still
+            // work but never recreates the long 3–4 window benchings it otherwise would.
+            // Never pushes a player past what the incoming plan already had, either.
+            var pPre=benchRun(p, A,true,  B,false), pNew=benchRun(p, A,false, B,true);
+            if(pNew > Math.max(2, pPre)) continue;
+            var qPre=benchRun(q, A,false, B,true),  qNew=benchRun(q, A,true,  B,false);
+            if(qNew > Math.max(2, qPre)) continue;
+            best={A:A,kA:kA,B:B,kB:kB,p:p,q:q,gain:gain};
+          }
+        }
+      }
+    }
+    if(!best) break;
+    segments[best.A].slots[best.kA]=best.q;
+    segments[best.B].slots[best.kB]=best.p;
+  }
+}
+// PRIORITY 1 — per-line strength balance. Balance each LINE (defense / midfield / attack)
+// across windows independently, so no single line is left stacked weak while another is
+// stacked strong. Because every line is flattened on its own, the whole-team total evens
+// out too. Swaps stay within a line, so a defender is never shuffled up to striker.
+function balanceStrengthPass(segments, fromSeg, lockedAt, movable){
+  var idx=[]; for(var i=fromSeg;i<segments.length;i++) idx.push(i);
+  if(idx.length<2) return;
+  movable = movable || function(){ return true; };
+  var lineKeys={def:[],mid:[],att:[]};
+  OUTFIELD_SLOTS.forEach(function(sl){ var L=LINE_OF[sl.key]; if(lineKeys[L]) lineKeys[L].push(sl.key); });
+  balanceGroup(segments, idx, lineKeys.def, lockedAt, movable);
+  balanceGroup(segments, idx, lineKeys.mid, lockedAt, movable);
+  balanceGroup(segments, idx, lineKeys.att, lockedAt, movable);
+}
 
 /* ============================================================
    AUTO-PLANNER
@@ -787,6 +912,7 @@ function generatePlan(game, opts){
   // over-played. GK minutes are weighted by GK_FAIR so keepers still earn some
   // outfield time rather than being pinned to equal totals exactly.
   var GK_FAIR = (game.gkFair!=null? game.gkFair : 0.85);
+  var stabW = (game.stabilityWeight!=null? game.stabilityWeight : 1);
   var fldMin={}, gkMin={};
   state.players.forEach(function(pl){ fldMin[pl.id]=0; gkMin[pl.id]=0; });
   if(opts.startGkMin){ for(var k2 in opts.startGkMin) gkMin[k2]=opts.startGkMin[k2]||0; }
@@ -801,7 +927,8 @@ function generatePlan(game, opts){
   // pre-counted into the fairness load so pinned players get correspondingly
   // fewer of the remaining windows (totals still even out). ----
   var pins = game.pins||{};
-  function pinAt(si, key){ var id=pins[si+'|'+key]; if(id && byId(id) && game.availability[id]!==false) return id; return null; }
+  var holdSlots = opts.holdSlots || null;   // ephemeral hard constraints (repair / keep-edits), not persisted as pins
+  function pinAt(si, key){ var id=pins[si+'|'+key]; if(!id && holdSlots) id=holdSlots[si+'|'+key]; if(id && byId(id) && game.availability[id]!==false) return id; return null; }
   function pinnedOutfield(si){ var o={}; OUTFIELD_SLOTS.forEach(function(sl){ var pid=pinAt(si,sl.key); if(pid) o[pid]=true; }); return o; }
 
   // Effective GK per segment, chosen window-by-window so GK minutes stay ~50/50
@@ -832,6 +959,8 @@ function generatePlan(game, opts){
     }
     if(!cand && elig.length){
       elig.sort(function(a,b){
+        var aa=a.avoidGK?1:0, ab=b.avoidGK?1:0;
+        if(aa!==ab) return aa-ab;                 // players who prefer to avoid GK are seeded last
         var da=(gkAcc[a.id]||0), db=(gkAcc[b.id]||0);
         if(da!==db) return da-db;
         var ra=(schedRank[a.id]!=null?schedRank[a.id]:99), rb=(schedRank[b.id]!=null?schedRank[b.id]:99);
@@ -850,7 +979,8 @@ function generatePlan(game, opts){
     OUTFIELD_SLOTS.forEach(function(sl){ var pid=pinAt(psi,sl.key); if(pid) fldMin[pid]=(fldMin[pid]||0)+segMeta[psi].dur; });
   }
 
-  function loadOf(id){ return (fldMin[id]||0)*10 + (gkScheduledTotal[id]||0)*10*GK_FAIR; }
+  function minWeight(id){ var p=byId(id); var w=p&&p.minutesWeight; return w==='more'?0.82:(w==='less'?1.18:1); }
+  function loadOf(id){ return ((fldMin[id]||0)*10 + (gkScheduledTotal[id]||0)*10*GK_FAIR) * minWeight(id); }
   // Suffix sum of window minutes: suffixMin[i] = minutes available from segment i to end.
   var suffixMin=new Array(segMeta.length+1).fill(0);
   for(var qi=segMeta.length-1; qi>=0; qi--) suffixMin[qi]=suffixMin[qi+1]+segMeta[qi].dur;
@@ -914,6 +1044,22 @@ function generatePlan(game, opts){
   }
   var prev = fromSeg>0 ? segments[fromSeg-1].slots : null;
 
+  // PRIORITY 2 — rest fairness (no back-to-back bench). Track how many consecutive prior
+  // windows each player has sat, and pull them ON the longer they've been idle so the same
+  // kids don't sit two windows in a row. Seeded from any fixed windows (repair/keep-edits).
+  // Stays well below the half-guarantee / keeper pulls, so it never breaks those.
+  var benchStreak={};
+  avail.forEach(function(pl){ benchStreak[pl.id]=0; });
+  for(var bi=0; bi<fromSeg; bi++){
+    var fseg=segments[bi], onf0={};
+    if(fseg && fseg.slots){ SLOTS.forEach(function(s){ var pid=fseg.slots[s.key]; if(pid) onf0[pid]=true; }); }
+    avail.forEach(function(pl){ benchStreak[pl.id] = onf0[pl.id]? 0 : benchStreak[pl.id]+1; });
+  }
+  function restPull(pl){
+    var k=benchStreak[pl.id]||0; if(k<=0) return 0;
+    return -Math.min(k,3)*50;              // sat 1 window -> -50, 2 -> -100, 3+ -> -150
+  }
+
   for(var si=fromSeg; si<segMeta.length; si++){
     var period=segMeta[si].period, dur=segMeta[si].dur;
     var gkId = gkForSeg[si];
@@ -938,8 +1084,8 @@ function generatePlan(game, opts){
       for(var ri=1;ri<=n;ri++){
         var slot=openSlots[ri-1];
         for(var ci=1;ci<=m;ci++){
-          var cc=cellCost(candidates[ci-1], slot, si, loadOf, prev, ci, prevSamePeriod);
-          if(cc<BIG) cc+=keeperOffHalfPull(candidates[ci-1], gkId)+halfGuaranteePull(candidates[ci-1], si)+scarcityCost(candidates[ci-1], slot);
+          var cc=cellCost(candidates[ci-1], slot, si, loadOf, prev, ci, prevSamePeriod, stabW);
+          if(cc<BIG) cc+=keeperOffHalfPull(candidates[ci-1], gkId)+halfGuaranteePull(candidates[ci-1], si)+scarcityCost(candidates[ci-1], slot)+restPull(candidates[ci-1]);
           cost[ri][ci]=cc;
         }
       }
@@ -954,8 +1100,8 @@ function generatePlan(game, opts){
       openSlots.forEach(function(slot){
         var best=-1,bestc=BIG;
         for(var q=0;q<pool.length;q++){
-          var c=cellCost(pool[q],slot,si,loadOf,prev,q+1,prevSamePeriod);
-          if(c<BIG) c+=keeperOffHalfPull(pool[q], gkId)+halfGuaranteePull(pool[q], si)+scarcityCost(pool[q], slot);
+          var c=cellCost(pool[q],slot,si,loadOf,prev,q+1,prevSamePeriod, stabW);
+          if(c<BIG) c+=keeperOffHalfPull(pool[q], gkId)+halfGuaranteePull(pool[q], si)+scarcityCost(pool[q], slot)+restPull(pool[q]);
           if(c<bestc){bestc=c;best=q;}
         }
         if(best>=0 && bestc<BIG){ assign[slot.key]=pool[best].id; pool.splice(best,1);} 
@@ -973,14 +1119,29 @@ function generatePlan(game, opts){
       else if(!pinnedSlotKeys[s.key]){ fldMin[pid]+=dur; }
     });
 
+    // update rest streaks for the NEXT window: on-field resets, benched increments
+    var onNow={}; SLOTS.forEach(function(s){ var pid=assign[s.key]; if(pid) onNow[pid]=true; });
+    avail.forEach(function(pl){ benchStreak[pl.id] = onNow[pl.id]? 0 : benchStreak[pl.id]+1; });
+
     segments[si]={period:period, dur:dur, slots:assign};
     prev=assign;
+  }
+
+  // Strength balancing: after fairness + eligibility have set each window, shuffle
+  // players BETWEEN windows (never changing anyone's total minutes) so no single
+  // window is far weaker than the rest. Opt-in via game.balanceStrength ('off'
+  // disables) and only runs when players actually carry differing skill ratings.
+  if(game.balanceStrength!=='off' && rosterHasSkills(avail)){
+    balanceStrengthPass(segments, fromSeg,
+      function(si,key){ return !!pinAt(si,key); },
+      function(id){ return !(gkScheduledTotal[id]>0); });   // keepers keep their full off-half; don't shuffle them
   }
 
   return { segments:segments, periods:game.periods, minutes:game.minutes, subInterval:game.subInterval, generatedAt:Date.now() };
 }
 
-function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex, prevSamePeriod){
+function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex, prevSamePeriod, stabW){
+  var sW = (stabW!=null? stabW : 1);
   var rank = slotEligRank(pl, slot);
   if(rank<0) return BIG;
   var c = 0;
@@ -992,10 +1153,10 @@ function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex, prevSamePeriod)
     var prevSlotKey=null;
     for(var k in prev){ if(prev[k]===pl.id){ prevSlotKey=k; break; } }
     if(prevSlotKey){
-      if(prevSlotKey===slot.key) c -= 5;              // stayed same position: good
+      if(prevSlotKey===slot.key) c -= 5*sW;              // stayed same position: good
       // Only penalize a genuine within-period on-field move; moving a staying-on
       // player at the half boundary is free (they reset during the break).
-      else if(prevSlotKey!=='GK' && prevSamePeriod) c += 8;
+      else if(prevSlotKey!=='GK' && prevSamePeriod) c += 8*sW;
     }
   }
   c += (colIndex||0)*0.001;             // deterministic tie-break
@@ -1072,7 +1233,10 @@ function renderRoster(){
     var row=el('div','listrow');
     var av=el('div','avatar',initials(pl.name)); paintAvatar(av,pl.name); row.appendChild(av);
     var nm=el('div','nm'); nm.appendChild(document.createTextNode(pl.name));
-    var pos=el('div','muted small'); pos.textContent=pl.positions.join(' · ');
+    var pos=el('div','muted small');
+    var sub=pl.positions.join(' · ');
+    if(pl.skill===1||pl.skill===2||pl.skill===3) sub += ' · ' + (['','Developing','Solid','Strong'][pl.skill]);
+    pos.textContent=sub;
     nm.appendChild(pos); row.appendChild(nm);
     var foot=el('span','pill '+pl.foot, pl.foot+' foot'); row.appendChild(foot);
     var edit=el('button','btn sm sec','Edit'); edit.onclick=function(){ openPlayerSheet(pl.id); };
@@ -1113,14 +1277,49 @@ function openPlayerSheet(id){
     })(i);
   }
 
+  // Preferences: minutes bias + avoid GK (soft levers the planner respects)
+  var prefL=el('label','fld'); prefL.style.marginTop='12px'; prefL.textContent='Minutes preference';
+  var mseg=el('div','seg');
+  pl._minW = pl.minutesWeight||'normal';
+  [['less','Fewer'],['normal','Normal'],['more','More']].forEach(function(mv){
+    var b=el('button',null,mv[1]); if(pl._minW===mv[0]) b.classList.add('on');
+    b.onclick=function(){ pl._minW=mv[0]; Array.prototype.forEach.call(mseg.children,function(c){c.classList.remove('on');}); b.classList.add('on'); };
+    mseg.appendChild(b);
+  });
+  prefL.appendChild(mseg); sheet.appendChild(prefL);
+
+  // Skill rating (optional) — lets the planner balance strong/developing players
+  // across sub windows so no single lineup is very weak. Unset = treated as average.
+  var skL=el('label','fld'); skL.style.marginTop='12px';
+  skL.appendChild(document.createTextNode('Player skill (optional) '));
+  skL.appendChild(infoIcon('Optional. Helps the planner spread strong and developing players across sub windows so one lineup isn’t very weak. Tap again to clear — unset counts as average.'));
+  var sseg=el('div','seg');
+  pl._skill = (pl.skill!=null? pl.skill : 0);   // 0 = unset / average
+  [[1,'Developing'],[2,'Solid'],[3,'Strong']].forEach(function(sv){
+    var b=el('button',null,sv[1]); if(pl._skill===sv[0]) b.classList.add('on');
+    b.onclick=function(){
+      pl._skill = (pl._skill===sv[0]? 0 : sv[0]);
+      Array.prototype.forEach.call(sseg.children,function(c){c.classList.remove('on');});
+      if(pl._skill===sv[0]) b.classList.add('on');
+    };
+    sseg.appendChild(b);
+  });
+  skL.appendChild(sseg); sheet.appendChild(skL);
+
+  var gkWrap=el('label','row'); gkWrap.style.marginTop='10px'; gkWrap.style.alignItems='center'; gkWrap.style.gap='8px';
+  var gkCb=el('input'); gkCb.type='checkbox'; gkCb.checked=!!pl.avoidGK; pl._avoidGK=!!pl.avoidGK;
+  gkCb.onchange=function(){ pl._avoidGK=gkCb.checked; };
+  gkWrap.appendChild(gkCb); gkWrap.appendChild(el('div','','Avoid playing in goal (unless needed)'));
+  sheet.appendChild(gkWrap);
+
   var btns=el('div','row'); btns.style.marginTop='14px';
   var saveB=el('button','btn grow', editing?'Save':'Add');
   saveB.onclick=function(){
     var nm=nameI.value.trim(); if(!nm){ toast('Name required'); return; }
     var poss=[]; selects.forEach(function(s){ if(s.value && poss.indexOf(s.value)<0) poss.push(s.value); });
     if(!poss.length){ toast('Pick at least one position'); return; }
-    if(editing){ pl.name=nm; pl.foot=pl._foot; pl.positions=poss; delete pl._foot; }
-    else { state.players.push({id:uid('p'),name:nm,foot:pl._foot,positions:poss}); }
+    if(editing){ pl.name=nm; pl.foot=pl._foot; pl.positions=poss; pl.minutesWeight=pl._minW; pl.avoidGK=pl._avoidGK; if(pl._skill) pl.skill=pl._skill; else delete pl.skill; delete pl._foot; delete pl._minW; delete pl._avoidGK; delete pl._skill; }
+    else { state.players.push({id:uid('p'),name:nm,foot:pl._foot,positions:poss,minutesWeight:pl._minW,avoidGK:pl._avoidGK,skill:(pl._skill||undefined)}); }
     save(); closeSheet(); renderRoster(); renderAvailability(); toast('Saved');
   };
   btns.appendChild(saveB);
@@ -1159,6 +1358,18 @@ function renderAvailability(){
     grid.appendChild(cell);
   });
   document.getElementById('availCount').textContent='('+cnt+' available)';
+  var rb=document.getElementById('availRepair');
+  if(rb){
+    var needs = g.plan? planRepairNeeds(g) : {outs:[],ins:[]};
+    if(g.plan && (needs.outs.length||needs.ins.length)){
+      rb.style.display='block'; rb.innerHTML='';
+      var msg=[]; if(needs.outs.length) msg.push(needs.outs.length+' now out'); if(needs.ins.length) msg.push(needs.ins.length+' now in');
+      rb.appendChild(el('div','','⚠️ Plan doesn’t match availability ('+msg.join(', ')+').'));
+      var b=el('button','btn sm','🔧 Repair plan'); b.style.marginTop='6px';
+      b.onclick=function(){ openRepairPreview(0,'Repair plan'); };
+      rb.appendChild(b);
+    } else { rb.style.display='none'; rb.innerHTML=''; }
+  }
 }
 
 function renderSavedGames(){
@@ -1192,6 +1403,9 @@ function loadGameIntoSetup(){
   document.getElementById('gameMinutes').value = g? g.minutes : 35;
   document.getElementById('gameSubInterval').value = g? (g.subInterval||defaultSub(g.minutes)) : defaultSub(35);
   updateGameLabel(); renderGameTotals();
+  var gf=document.getElementById('gkFairSel'); if(gf) gf.value=String(g? (g.gkFair!=null?g.gkFair:0.85):0.85);
+  var st=document.getElementById('stabilitySel'); if(st) st.value=String(g? (g.stabilityWeight!=null?g.stabilityWeight:1):1);
+  var bs=document.getElementById('balanceSel'); if(bs) bs.value=(g && g.balanceStrength==='off')?'off':'auto';
   renderAvailability(); renderSavedGames();
 }
 function updateGameLabel(){
@@ -1291,6 +1505,41 @@ function renderPlan(){
   var htr2=el('tr');
   info.forEach(function(x){ htr2.appendChild(el('th','', x.startMin+'–'+x.endMin+"'")); });
   thead.appendChild(htr2);
+  // Per-line strength readout (only when players carry skill ratings). One row per
+  // line — Defense / Midfield / Attack — showing that line's total on-field skill each
+  // window, flagged when a line is notably weaker (or stronger) than its own typical
+  // window. Per-line matters because a balanced TEAM total can still hide a weak back line.
+  var availPl=state.players.filter(function(pl){ return g.availability[pl.id]!==false; });
+  if(rosterHasSkills(availPl)){
+    var strengthLines=[{key:'def',label:'Def strength'},{key:'mid',label:'Mid strength'},{key:'att',label:'Att strength'}];
+    var lineKeysByGroup={def:[],mid:[],att:[]};
+    OUTFIELD_SLOTS.forEach(function(sl){ var L=LINE_OF[sl.key]; if(lineKeysByGroup[L]) lineKeysByGroup[L].push(sl.key); });
+    strengthLines.forEach(function(ln){
+      var keys=lineKeysByGroup[ln.key];
+      var vals=info.map(function(x){
+        var seg=g.plan.segments[x.gi];
+        var occupied=keys.some(function(k){ return seg.slots[k]; });
+        return occupied? groupStrength(seg,keys) : null;
+      });
+      var present=vals.filter(function(v){ return v!=null; });
+      var avg=present.length? present.reduce(function(a,b){return a+b;},0)/present.length : 0;
+      var htr=el('tr'); var lab=el('th','',ln.label); lab.style.fontWeight='600'; htr.appendChild(lab);
+      vals.forEach(function(v){
+        var th=el('th'); th.style.fontWeight='700';
+        if(v==null){ th.textContent='—'; th.style.color='var(--muted)'; }
+        else {
+          var weak=v<avg-0.75, strong=v>avg+0.75;
+          th.textContent=String(v);
+          th.style.color= weak?'var(--bad)':(strong?'var(--accent-d)':'var(--muted)');
+          th.title= weak?(ln.label+' — weaker than usual this window')
+                  :(strong?(ln.label+' — stronger than usual this window')
+                  :'Total on-field skill for this line (each player 1–3)');
+        }
+        htr.appendChild(th);
+      });
+      thead.appendChild(htr);
+    });
+  }
   tbl.appendChild(thead);
 
   var tb=el('tbody');
@@ -1317,7 +1566,20 @@ function renderPlan(){
     tb.appendChild(tr);
   });
   tbl.appendChild(tb);
-  host.innerHTML=''; host.appendChild(tbl);
+  host.innerHTML='';
+  var rn=planRepairNeeds(g);
+  if(rn.outs.length||rn.ins.length){
+    var bn=el('div','repairbar');
+    var parts=[];
+    if(rn.outs.length) parts.push(rn.outs.map(function(id){return shortName(byId(id));}).join(', ')+' now out');
+    if(rn.ins.length) parts.push(rn.ins.map(function(id){return shortName(byId(id));}).join(', ')+' now in');
+    bn.appendChild(el('div','','⚠️ Availability changed: '+parts.join(' · ')));
+    var rbtn=el('button','btn sm','🔧 Repair plan'); rbtn.style.marginTop='6px';
+    rbtn.onclick=function(){ var fs=(timer.running||(g.live&&g.live.period>0))?currentLiveSeg():0; openRepairPreview(fs,'Repair plan'); };
+    bn.appendChild(rbtn);
+    host.appendChild(bn);
+  }
+  host.appendChild(tbl);
 
   renderPlanSummary(g, stat);
   renderPlanPitch(g);
@@ -1353,6 +1615,127 @@ function generateRest(){
   pushUndo();
   g.plan=generatePlan(g);   // pins in game.pins are honored as hard constraints
   save(); renderPlan(); toast('Generated around '+countPins(g)+' pinned cell'+(countPins(g)>1?'s':''));
+}
+
+/* ---------- Manual edits: soft locks preserved across regenerate / repair ---------- */
+function editKey(si,slotKey){ return si+'|'+slotKey; }
+function markEdit(g,si,slotKey){
+  if(!g.plan||!g.plan.segments[si]) return;
+  var pid=g.plan.segments[si].slots[slotKey];
+  if(!g.edits) g.edits={};
+  if(pid) g.edits[editKey(si,slotKey)]=pid; else delete g.edits[editKey(si,slotKey)];
+}
+function pruneEdits(g){
+  if(!g.edits||!g.plan||!g.plan.segments) return;
+  Object.keys(g.edits).forEach(function(k){
+    var p=k.split('|'); var seg=g.plan.segments[+p[0]];
+    if(!seg || seg.slots[p[1]]!==g.edits[k]) delete g.edits[k];
+  });
+}
+function countEdits(g){ return (g&&g.edits)?Object.keys(g.edits).length:0; }
+function clearEdits(g){ g.edits={}; }
+function pruneEditsAndPins(g){ prunePins(g); pruneEdits(g); }
+// pins + manual edits as one ephemeral hold map for keep-across-rebuild
+function planHolds(g){ var h={}; if(g.pins) for(var k in g.pins) h[k]=g.pins[k]; if(g.edits) for(var k2 in g.edits) h[k2]=g.edits[k2]; return h; }
+
+/* ---------- Repair-in-place: adjust a set plan for a late availability change ---------- */
+function cloneGame(g){ return JSON.parse(JSON.stringify(g)); }
+// minutes (field / gk) accrued through the first `upto` segments (exclusive)
+function minutesThrough(g, upto){
+  var fm={},gm={};
+  g.plan.segments.forEach(function(seg,si){
+    if(si>=upto) return;
+    SLOTS.forEach(function(s){ var pid=seg.slots[s.key]; if(!pid) return; if(s.key==='GK') gm[pid]=(gm[pid]||0)+seg.dur; else fm[pid]=(fm[pid]||0)+seg.dur; });
+  });
+  return {field:fm, gk:gm};
+}
+// Who is out of sync with the plan given current availability.
+function planRepairNeeds(g){
+  var needs={outs:[], ins:[]};
+  if(!g.plan||!g.plan.segments) return needs;
+  var inPlan={};
+  g.plan.segments.forEach(function(seg){ SLOTS.forEach(function(s){ if(seg.slots[s.key]) inPlan[seg.slots[s.key]]=true; }); });
+  for(var id in inPlan){ if(g.availability[id]===false) needs.outs.push(id); }
+  state.players.forEach(function(p){ if(g.availability[p.id]!==false && !inPlan[p.id]) needs.ins.push(p.id); });
+  return needs;
+}
+// Build a repaired candidate clone (availability is already set on g).
+function buildRepair(g, fromSeg){
+  var needs=planRepairNeeds(g);
+  var cand=cloneGame(g);
+  if(needs.outs.length){
+    // Out: hold every still-available occupied cell; the outs' cells become holes to backfill.
+    // Everything else (incl. past windows) stays put — maximum stability.
+    var holds={};
+    cand.plan.segments.forEach(function(seg,si){ SLOTS.forEach(function(s){ var pid=seg.slots[s.key]; if(pid && needs.outs.indexOf(pid)<0) holds[si+'|'+s.key]=pid; }); });
+    cand.plan=generatePlan(cand,{holdSlots:holds});
+  } else {
+    // In only: reflow from `fromSeg` forward so returning players earn fair minutes,
+    // keeping past windows, pins and manual edits intact.
+    var fs=Math.max(0, Math.min(fromSeg||0, cand.plan.segments.length-1));
+    var mt=minutesThrough(cand, fs);
+    var startMinutes={}, startGkMin={};
+    for(var a in mt.field) startMinutes[a]=(startMinutes[a]||0)+mt.field[a];
+    for(var b in mt.gk){ startMinutes[b]=(startMinutes[b]||0)+mt.gk[b]; startGkMin[b]=mt.gk[b]; }
+    var ph=planHolds(cand), holds2={};
+    Object.keys(ph).forEach(function(k){ if(+k.split('|')[0]>=fs) holds2[k]=ph[k]; });
+    cand.plan=generatePlan(cand,{fromSegment:fs, fixedSegments:cand.plan.segments, startMinutes:startMinutes, startGkMin:startGkMin, holdSlots:holds2});
+  }
+  pruneEditsAndPins(cand);
+  return cand;
+}
+// Set a player unavailable and preview the repair.
+function repairPlayerOut(id){
+  var g=currentGame(); if(!g||!g.plan) return;
+  g.availability[id]=false; save();
+  openRepairPreview(0, 'Mark '+shortName(byId(id))+' out — repair');
+}
+function openRepairPreview(fromSeg, headline){
+  var g=currentGame(); if(!g||!g.plan){ toast('No plan'); return; }
+  var needs=planRepairNeeds(g);
+  if(!needs.outs.length && !needs.ins.length){ toast('Plan already matches availability'); return; }
+  var cand=buildRepair(g, fromSeg);
+  showPlanPreview(headline||'Repair plan', g, cand, function(){
+    pushUndo();
+    g.availability=cand.availability; g.plan=cand.plan; g.pins=cand.pins; g.edits=cand.edits;
+    save(); renderAll(); toast('Plan repaired');
+  });
+}
+// Preview minute changes between two game states, then apply.
+function showPlanPreview(title, gBefore, gAfter, onApply){
+  var before=computeStats(gBefore), after=computeStats(gAfter);
+  var idset={}; Object.keys(before).forEach(function(k){idset[k]=1;}); Object.keys(after).forEach(function(k){idset[k]=1;});
+  var rows=Object.keys(idset).map(function(id){
+    var bv=before[id]?before[id].min:0, av=after[id]?after[id].min:0;
+    return {id:id, b:bv, a:av, d:av-bv};
+  }).sort(function(x,y){
+    var dd=Math.abs(y.d)-Math.abs(x.d); if(dd) return dd;
+    var nx=byId(x.id)?byId(x.id).name:'', ny=byId(y.id)?byId(y.id).name:''; return nx.localeCompare(ny);
+  });
+  var sheet=document.getElementById('sheet'); sheet.innerHTML='';
+  sheet.appendChild(el('h3',null,title));
+  sheet.appendChild(el('div','muted small','Review the minute changes, then apply. Nothing changes until you tap Apply.'));
+  var list=el('div'); list.style.marginTop='8px';
+  rows.forEach(function(r){
+    var pl=byId(r.id); if(!pl) return;
+    var c=el('div','choice');
+    var av=el('div','avatar',initials(pl.name)); paintAvatar(av,pl.name); av.style.width='28px';av.style.height='28px';av.style.fontSize='11px'; c.appendChild(av);
+    var nm=el('div','grow'); nm.appendChild(el('div','',shortName(pl))); c.appendChild(nm);
+    var tag;
+    if(r.b===0 && r.a>0) tag=el('span','pill',"IN · "+r.a+"'");
+    else if(r.a===0 && r.b>0) tag=el('span','pill','OUT');
+    else if(r.d===0) tag=el('span','pill',r.a+"' (=)");
+    else tag=el('span','pill',r.b+"→"+r.a+"' ("+(r.d>0?'+':'')+r.d+")");
+    c.appendChild(tag);
+    list.appendChild(c);
+  });
+  sheet.appendChild(list);
+  var apply=el('button','btn','✓ Apply'); apply.style.marginTop='12px'; apply.style.width='100%';
+  apply.onclick=function(){ closeSheet(); onApply(); };
+  sheet.appendChild(apply);
+  var cancel=el('button','btn ghost','Cancel'); cancel.style.marginTop='8px'; cancel.style.width='100%'; cancel.onclick=closeSheet;
+  sheet.appendChild(cancel);
+  openSheet();
 }
 
 
@@ -1627,6 +2010,14 @@ function onCellTap(si, slotKey){
   sheet.appendChild(pinRow);
   sheet.appendChild(el('div','muted small','Pinned cells are kept when you tap “Generate rest”.')).style.marginBottom='6px';
 
+  // Late change: mark this player out for the whole game and repair around them
+  if(curId){
+    var outBtn=el('button','btn sec sm','🚑 '+shortName(byId(curId))+' is out — repair plan');
+    outBtn.style.width='100%'; outBtn.style.marginBottom='8px';
+    outBtn.onclick=function(){ closeSheet(); repairPlayerOut(curId); };
+    sheet.appendChild(outBtn);
+  }
+
   // Who is on field this segment
   var onFieldIds={}; SLOTS.forEach(function(s){ var id=seg.slots[s.key]; if(id) onFieldIds[id]=s.key; });
   var availIds = state.players.filter(function(p){return g.availability[p.id]!==false;}).map(function(p){return p.id;});
@@ -1675,11 +2066,13 @@ function doSub(si, slotKey, newId){
   var displaced=slots[slotKey];
   slots[slotKey]=newId;
   if(otherKey) slots[otherKey]=displaced; // swap
+  markEdit(g,si,slotKey); if(otherKey) markEdit(g,si,otherKey);
   prunePins(g); save(); renderPlan(); renderLive(); toast('Substituted');
 }
 function swapSlots(si, a, b){
   var g=currentGame(); var slots=g.plan.segments[si].slots;
   var t=slots[a]; slots[a]=slots[b]; slots[b]=t;
+  markEdit(g,si,a); markEdit(g,si,b);
   prunePins(g); save(); renderPlan(); renderLive(); toast('Swapped');
 }
 
@@ -1826,6 +2219,13 @@ function setClock(){
   c.textContent=(mm<10?'0':'')+mm+':'+(ss<10?'0':'')+ss;
   c.classList.toggle('warn', timer.remaining<=WARN_SECONDS && timer.remaining>0);
   c.classList.toggle('done', timer.remaining<=0);
+  updateStartHint();
+}
+function updateStartHint(){
+  var h=document.getElementById('startHint'); if(!h) return;
+  var g=currentGame();
+  var fresh = g && g.plan && g.plan.segments && g.minutes && !timer.running && timer.remaining===g.minutes*60;
+  h.style.display = fresh? 'block':'none';
 }
 function initClock(){
   var g=currentGame();
@@ -1860,8 +2260,9 @@ function startTimer(){
   if(timer.remaining<=0) initClock();
   timer.running=true; timer.handle=setInterval(tick,1000);
   primeAudio();
+  updateStartHint();
 }
-function pauseTimer(){ timer.running=false; clearInterval(timer.handle); }
+function pauseTimer(){ timer.running=false; clearInterval(timer.handle); updateStartHint(); }
 function resetTimer(){ pauseTimer(); initClock(); }
 function nextPeriod(){
   var g=currentGame(); if(!g) return;
@@ -2233,6 +2634,7 @@ function remapGameIds(g, map){
   if(g.availability){ var na={}; Object.keys(g.availability).forEach(function(id){ na[map[id]||id]=g.availability[id]; }); g.availability=na; }
   if(g.plan && g.plan.segments){ g.plan.segments.forEach(function(seg){ for(var k in seg.slots){ if(seg.slots[k]) seg.slots[k]=map[seg.slots[k]]||seg.slots[k]; } }); }
   if(g.pins){ var np={}; Object.keys(g.pins).forEach(function(k){ var v=g.pins[k]; np[k]=map[v]||v; }); g.pins=np; }
+  if(g.edits){ var ne={}; Object.keys(g.edits).forEach(function(k){ var v=g.edits[k]; ne[k]=map[v]||v; }); g.edits=ne; }
   return g;
 }
 // robustly turn pasted text (raw JSON, base64 code, or a full share URL) into an object
@@ -2414,6 +2816,7 @@ function doGenerate(){
   if(availN<11){ toast('Need at least 11 available (have '+availN+')'); }
   pushUndo();
   g.plan=generatePlan(g);
+  clearEdits(g);
   g.locked=false; g.live={period:0};
   save(); renderPlan(); renderSavedGames(); updateGameLabel();
   switchTab('plan');
@@ -2432,6 +2835,9 @@ function wire(){
   document.getElementById('generateBtn').onclick=doGenerate;
   document.getElementById('allInBtn').onclick=function(){ var g=ensureGame(); state.players.forEach(function(p){g.availability[p.id]=true;}); save(); renderAvailability(); };
   document.getElementById('allOutBtn').onclick=function(){ var g=ensureGame(); state.players.forEach(function(p){g.availability[p.id]=false;}); save(); renderAvailability(); };
+  document.getElementById('gkFairSel').onchange=function(){ var g=ensureGame(); g.gkFair=parseFloat(this.value); save(); };
+  document.getElementById('stabilitySel').onchange=function(){ var g=ensureGame(); g.stabilityWeight=parseFloat(this.value); save(); };
+  document.getElementById('balanceSel').onchange=function(){ var g=ensureGame(); g.balanceStrength=this.value; save(); };
   ['gameName','gamePeriods','gameMinutes','gameSubInterval'].forEach(function(idn){
     document.getElementById(idn).onchange=function(){ ensureGame(); renderGameTotals(); renderSavedGames(); updateGameLabel(); };
     document.getElementById(idn).oninput=function(){ renderGameTotals(); };
@@ -2447,9 +2853,14 @@ function wire(){
   });
 
   document.getElementById('regenBtn').onclick=function(){ var g=currentGame(); if(!g){toast('No game');return;} if(g.locked){toast('Unlock first');return;}
-    var np=countPins(g);
-    if(np>0 && !confirm('Regenerate wipes everything, including '+np+' pinned cell'+(np>1?'s':'')+'.\n\nUse “Generate rest” to keep pins. Continue and clear pins?')) return;
-    pushUndo(); clearPins(g); g.plan=generatePlan(g); save(); renderPlan(); toast('Regenerated'); };
+    var np=countPins(g), ne=countEdits(g);
+    if(np+ne>0){
+      var keep=confirm('You have '+np+' pinned and '+ne+' hand-edited cell'+((np+ne)>1?'s':'')+'.\n\nOK = rebuild but KEEP them.\nCancel = clear everything and fully rebuild.');
+      pushUndo();
+      if(keep){ g.plan=generatePlan(g,{holdSlots:planHolds(g)}); pruneEditsAndPins(g); toast('Rebuilt · kept '+(np+ne)+' cell'+((np+ne)>1?'s':'')); }
+      else { clearPins(g); clearEdits(g); g.plan=generatePlan(g); toast('Regenerated'); }
+    } else { pushUndo(); g.plan=generatePlan(g); toast('Regenerated'); }
+    save(); renderPlan(); };
   document.getElementById('genRestBtn').onclick=generateRest;
   document.getElementById('pinXiBtn').onclick=pinStartingXI;
   document.getElementById('lockBtn').onclick=function(){ var g=currentGame(); if(!g||!g.plan)return; g.locked=!g.locked; save(); renderPlan(); toast(g.locked?'Locked':'Unlocked'); };
@@ -2957,6 +3368,7 @@ window.__LM__ = {
   get state(){return state;},
   generatePlan:generatePlan, computeStats:computeStats, computeFlags:computeFlags,
   setPin:setPin, clearPins:clearPins, countPins:countPins, isPinned:isPinned, pinStartingXI:pinStartingXI, generateRest:generateRest, prunePins:prunePins,
+  planRepairNeeds:planRepairNeeds, buildRepair:buildRepair, markEdit:markEdit, countEdits:countEdits, planHolds:planHolds, minutesThrough:minutesThrough,
   buildSegments:buildSegments, buildGkSchedule:buildGkSchedule,
   segTransition:segTransition, slotEligRank:slotEligRank, PITCH:PITCH,
   segInfo:segInfo, playerPathCaption:playerPathCaption, renderPlanPitch:renderPlanPitch,
