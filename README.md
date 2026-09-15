@@ -5,7 +5,7 @@ fixed **4-3-3** from an iPad on the sideline. Everything lives in one `index.htm
 CSS + vanilla JavaScript, **no build step, no server, no network requests**. All data is
 stored locally in your browser via `localStorage`.
 
-> **Canonical app URL:** **https://happy-field-051df6c0f.5.azurestaticapps.net** (Azure Static
+> **Canonical app URL:** **https://blue-moss-0e0958f0f.5.azurestaticapps.net** (Azure Static
 > Web Apps — includes optional [cloud sync](#cloud-sync-azure--optional)).
 > The old GitHub Pages address **https://mwdavids.github.io/lineup-manager/ is deprecated** and
 > now just redirects here — please update your bookmarks / Home Screen icon. The app still runs
