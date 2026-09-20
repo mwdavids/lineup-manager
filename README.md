@@ -39,6 +39,36 @@ your existing roster maps cleanly without relabelling anyone.
   reminder to start the clock at kickoff.
 - Works with no internet, no account, and no other device.
 
+## Requirements
+
+**Device & browser**
+
+- **iPhone / iPad:** iOS/iPadOS 15 or newer, opened in **Safari** (required for "Add to Home
+  Screen"). The iPad is the intended sideline device.
+- **Android phone / tablet:** a recent **Chrome** (or Edge), which also offers a native
+  **Install** prompt.
+- **Laptop / desktop:** any modern **Chrome, Edge, or Safari** — it runs as a normal browser
+  tab with no install and no build step.
+
+**Internet connectivity**
+
+- **First load only:** you need a connection **once** to open the app from the hosted URL (or
+  to copy `index.html` onto the device). After that first successful load the service worker
+  caches the app, so it **launches and runs with no signal** — exactly what you want on a
+  sideline with no reception.
+- **Core coaching is fully offline:** rosters, plans, pinning a starting XI, the live timer,
+  sub alerts, pitch view, print/export, and offline **long** share links (`#g=…`) all work
+  with **zero connectivity** — you can coach an entire game in airplane mode.
+- **Only these features need internet, and only while you use them:**
+  - **Cloud sync** (auto-push/pull between coaches and devices) — offline changes are queued
+    and flushed automatically on reconnect.
+  - **Microsoft account sign-in** and switching teams.
+  - Creating or opening a **short share link** (`#s=…`); offline, the app automatically falls
+    back to a self-contained long link.
+  - Fetching a **new app version** (the "Update available — Reload" banner).
+- **No account is required** for offline use, and nothing is uploaded to a server unless you
+  opt into [Cloud sync](#cloud-sync-azure--optional).
+
 ## How to open it on an iPad
 
 1. Copy `index.html` onto the iPad (AirDrop, email, iCloud Drive, USB, or a one-time
@@ -46,19 +76,38 @@ your existing roster maps cleanly without relabelling anyone.
 2. That's it — the app runs entirely in the browser. After the first open it needs **no
    network** at all.
 
-### Add to Home Screen (recommended)
+### Install on a mobile device (Add to Home Screen)
 
-For a full-screen, app-like experience:
+Installing gives you a full-screen, app-like icon with no browser chrome — best for the
+sideline. The app is a **PWA (Progressive Web App)**: once installed it's cached for
+**reliable offline launch** (not just offline *use*). When a new version is deployed you'll
+see a small **"Update available — Reload"** banner.
 
-1. Open `index.html` (or the hosted URL) in Safari.
-2. Tap the **Share** button → **Add to Home Screen** → **Add**.
-3. Launch it from the new **Lineup** icon. It opens full-screen with no Safari chrome —
-   perfect for the sideline.
+**iPhone / iPad (Safari — required):**
 
-The app is a **PWA (Progressive Web App)**: it ships a web manifest and a service worker,
-so once opened it's cached for **reliable offline launch** (not just offline *use*), and on
-Android / desktop Chrome or Edge you'll get a native **Install** prompt too. When a new
-version is deployed you'll see a small **"Update available — Reload"** banner.
+1. Open the app's hosted URL (or `index.html`) in **Safari**. *(Other iOS browsers can't add
+   to the Home Screen.)*
+2. Tap the **Share** button (the square with an up-arrow) → **Add to Home Screen** → **Add**.
+3. Launch it from the new **Lineup** icon — it opens full-screen with no Safari chrome.
+
+**Android phone / tablet (Chrome or Edge):**
+
+1. Open the app's hosted URL in **Chrome** (or Edge).
+2. Tap the **⋮** menu → **Install app** (or **Add to Home screen**), or accept the **Install**
+   banner the browser offers automatically, then confirm **Install**.
+3. Launch it from the new **Lineup** icon in your app drawer / Home Screen.
+
+**Laptop / desktop (Chrome or Edge):** click the **Install** icon in the address bar (or the
+**⋮** menu → **Install Lineup Manager**) for the same standalone window. Safari on Mac runs it
+as a normal tab.
+
+> **Pick one launch method and stick with it.** An installed icon and a plain browser tab are
+> treated as **separate storage**, so a plan saved in one won't appear in the other. Use
+> [Sync between devices](#sync-between-devices) to move data across launch methods or devices.
+
+Once installed, the only time you need a connection is to **first load** the app, to **cloud
+sync**, or to pull a **new version** — see [Requirements](#requirements) above. Everything
+else runs offline.
 
 ### Offline & data notes
 
