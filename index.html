@@ -10,6 +10,7 @@
 <meta name="theme-color" content="#0b3d2e" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='47' fill='%23fff' stroke='%23111' stroke-width='4'/><g fill='%23111'><polygon points='50,34 65.2,45.1 59.4,62.9 40.6,62.9 34.8,45.1'/><polygon points='67,26.5 66.8,6.1 86.5,20.4'/><polygon points='77.6,59 96.9,52.5 89.4,75.6'/><polygon points='50,79 62.2,95.4 37.8,95.4'/><polygon points='22.4,59 10.6,75.6 3.1,52.5'/><polygon points='33,26.5 13.5,20.4 33.2,6.1'/></g><g stroke='%23111' stroke-width='3' stroke-linecap='round'><line x1='50' y1='34' x2='50' y2='7'/><line x1='65.2' y1='45.1' x2='90' y2='37'/><line x1='59.4' y1='62.9' x2='75' y2='84'/><line x1='40.6' y1='62.9' x2='25' y2='84'/><line x1='34.8' y1='45.1' x2='10' y2='37'/></g></svg>" />
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230b3d2e'/><g transform='translate(10,10) scale(0.8)'><circle cx='50' cy='50' r='47' fill='%23fff' stroke='%23111' stroke-width='4'/><g fill='%23111'><polygon points='50,34 65.2,45.1 59.4,62.9 40.6,62.9 34.8,45.1'/><polygon points='67,26.5 66.8,6.1 86.5,20.4'/><polygon points='77.6,59 96.9,52.5 89.4,75.6'/><polygon points='50,79 62.2,95.4 37.8,95.4'/><polygon points='22.4,59 10.6,75.6 3.1,52.5'/><polygon points='33,26.5 13.5,20.4 33.2,6.1'/></g><g stroke='%23111' stroke-width='3' stroke-linecap='round'><line x1='50' y1='34' x2='50' y2='7'/><line x1='65.2' y1='45.1' x2='90' y2='37'/><line x1='59.4' y1='62.9' x2='75' y2='84'/><line x1='40.6' y1='62.9' x2='25' y2='84'/><line x1='34.8' y1='45.1' x2='10' y2='37'/></g></g></svg>" />
+<link rel="manifest" href="manifest.json" />
 <title>Lineup Manager — U13 4-3-3</title>
 <style>
   :root{
@@ -694,14 +695,73 @@ function migrateIds(){
   if(state.currentGameId && map[state.currentGameId]) state.currentGameId=map[state.currentGameId];
   return Object.keys(map).length;
 }
+
+/* ---------- Durable storage (IndexedDB mirror) ----------
+   localStorage stays the synchronous primary so save()/load() are unchanged in spirit,
+   but every save is also mirrored to IndexedDB, which iOS Safari does NOT evict the way
+   it can drop localStorage (ITP / storage pressure). On boot we recover from the mirror
+   if localStorage was wiped. We also request persistent storage. All best-effort: if
+   IndexedDB is unavailable the app behaves exactly as before. */
+var IDB_NAME='lineup-manager', IDB_STORE='kv', __lmRestoredRaw=null, __idbPromise=null;
+function idbOpen(){
+  if(__idbPromise) return __idbPromise;
+  __idbPromise=new Promise(function(resolve,reject){
+    try{
+      if(!('indexedDB' in window)) return reject('no-idb');
+      var req=indexedDB.open(IDB_NAME,1);
+      req.onupgradeneeded=function(){ try{ req.result.createObjectStore(IDB_STORE); }catch(e){} };
+      req.onsuccess=function(){ resolve(req.result); };
+      req.onerror=function(){ reject(req.error||'idb-error'); };
+    }catch(e){ reject(e); }
+  });
+  return __idbPromise;
+}
+function idbSet(key,val){
+  return idbOpen().then(function(db){
+    return new Promise(function(resolve){
+      try{
+        var tx=db.transaction(IDB_STORE,'readwrite');
+        tx.objectStore(IDB_STORE).put(val,key);
+        tx.oncomplete=function(){ resolve(true); };
+        tx.onerror=function(){ resolve(false); };
+      }catch(e){ resolve(false); }
+    });
+  }).catch(function(){ return false; });
+}
+function idbGet(key){
+  return idbOpen().then(function(db){
+    return new Promise(function(resolve){
+      try{
+        var tx=db.transaction(IDB_STORE,'readonly');
+        var g=tx.objectStore(IDB_STORE).get(key);
+        g.onsuccess=function(){ resolve(g.result); };
+        g.onerror=function(){ resolve(null); };
+      }catch(e){ resolve(null); }
+    });
+  }).catch(function(){ return null; });
+}
+function requestPersistentStorage(){
+  try{
+    if(navigator.storage && navigator.storage.persist){
+      navigator.storage.persisted().then(function(already){
+        if(!already) navigator.storage.persist();
+      }).catch(function(){ try{ navigator.storage.persist(); }catch(e){} });
+    }
+  }catch(e){}
+}
+
 function save(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+  var json=null;
+  try{ json=JSON.stringify(state); }catch(e){}
+  try{ if(json!=null) localStorage.setItem(LS_KEY, json); }
   catch(e){ toast('Save failed: storage full?'); }
+  try{ if(json!=null) idbSet(LS_KEY, json); }catch(e){}   // durable mirror (async, best-effort)
   try{ if(typeof Sync!=='undefined' && Sync.connected && !Sync._applying) Sync.onLocalChange(); }catch(e){}
 }
 function load(){
   var raw=null;
   try{ raw=localStorage.getItem(LS_KEY); }catch(e){}
+  if(!raw && typeof __lmRestoredRaw==='string' && __lmRestoredRaw){ raw=__lmRestoredRaw; }  // IDB recovery
   if(raw){
     try{ state=JSON.parse(raw); }catch(e){ raw=null; }
   }
@@ -2186,7 +2246,7 @@ function swapSlots(si, a, b){
 }
 
 /* ----- Live ----- */
-var timer={ remaining:0, running:false, handle:null, warned:false, segLocal:0, seg:0, gameId:null };
+var timer={ remaining:0, running:false, handle:null, warned:false, segLocal:0, seg:0, gameId:null, deadline:0, warnedSegs:{} };
 
 // ---- Screen Wake Lock: keep the device awake while the Live tab is showing, so the
 // game clock stays visible and the screen never locks mid-match. Held only on Live to
@@ -2363,6 +2423,7 @@ function initClock(){
   var g=currentGame();
   timer.remaining = g? g.minutes*60 : 0; timer.warned=false; timer.segLocal=0;
   timer.gameId = g? g.id : null;
+  timer.warnedSegs={}; timer.deadline=0;
   timer.seg = g && g.plan? firstSegOfPeriod(g, currentLivePeriod()) : 0;
   setClock(); renderLive();
 }
@@ -2373,37 +2434,74 @@ function clockInProgress(){
   if(!g || timer.gameId!==g.id) return false;
   return timer.running || (g.minutes && timer.remaining>0 && timer.remaining < g.minutes*60);
 }
-function tick(){
-  if(!timer.running) return;
-  timer.remaining--;
-  var g=currentGame();
-  if(g && g.plan){
-    var segs=periodSegs(g, currentLivePeriod());
-    var elapsed=(g.minutes*60)-timer.remaining;
-    var cur=segs[timer.segLocal];
-    if(cur){
-      var toBoundary=cur.endSec-elapsed;
-      if(toBoundary===WARN_SECONDS){ triggerSubAlert(); }
-      if(toBoundary<=0 && timer.segLocal < segs.length-1){
-        timer.segLocal++; timer.seg=segs[timer.segLocal].gi;
-        beep(2); vibrate([200,100,200]); toast('🔄 Sub window — make the subs');
-        renderLive();
-      }
+/* Wall-clock timer: remaining is derived from a fixed deadline (epoch ms), not by
+   counting ticks. This keeps the clock accurate after the screen sleeps or the tab is
+   backgrounded (where setInterval throttles/pauses), and lets us catch up any sub-window
+   alerts that would otherwise have been skipped while we weren't ticking. */
+function syncRemaining(){
+  if(timer.running && timer.deadline){
+    timer.remaining = Math.max(0, Math.round((timer.deadline - Date.now())/1000));
+  }
+}
+function processBoundaries(){
+  var g=currentGame(); if(!g || !g.plan) return;
+  var segs=periodSegs(g, currentLivePeriod());
+  var elapsed=(g.minutes*60)-timer.remaining;
+  var cur=segs[timer.segLocal];
+  if(cur){
+    var toBoundary=cur.endSec-elapsed;
+    var key=currentLivePeriod()+':'+timer.segLocal;
+    if(toBoundary>0 && toBoundary<=WARN_SECONDS && !timer.warnedSegs[key]){
+      timer.warnedSegs[key]=1; triggerSubAlert();
     }
   }
-  if(timer.remaining<=0){ timer.remaining=0; timer.running=false; clearInterval(timer.handle); alertEnd(); }
+  var advanced=false;
+  while(timer.segLocal < segs.length-1){
+    var c2=segs[timer.segLocal];
+    if((c2.endSec-elapsed)<=0){ timer.segLocal++; timer.seg=segs[timer.segLocal].gi; advanced=true; }
+    else break;
+  }
+  if(advanced){ beep(2); vibrate([200,100,200]); toast('🔄 Sub window — make the subs'); renderLive(); }
+}
+function timerRefresh(){
+  if(!timer.running) return;
+  syncRemaining();
+  processBoundaries();
+  if(timer.remaining<=0){
+    timer.remaining=0; timer.running=false;
+    if(timer.handle){ clearInterval(timer.handle); timer.handle=null; }
+    timer.deadline=0; alertEnd();
+  }
   setClock();
+  var g=currentGame();
   if(g && g.plan) renderSubCard(g, currentLiveSeg());
 }
+function tick(){ timerRefresh(); }
 function startTimer(){
   if(timer.running) return;
   if(timer.remaining<=0) initClock();
-  timer.running=true; timer.handle=setInterval(tick,1000);
+  timer.running=true;
+  timer.deadline=Date.now()+timer.remaining*1000;
+  timer.handle=setInterval(tick,1000);
   primeAudio();
+  refreshWakeLock();
   updateStartHint();
 }
-function pauseTimer(){ timer.running=false; clearInterval(timer.handle); updateStartHint(); }
+function pauseTimer(){
+  if(timer.running) syncRemaining();
+  timer.running=false;
+  if(timer.handle){ clearInterval(timer.handle); timer.handle=null; }
+  timer.deadline=0;
+  updateStartHint();
+}
 function resetTimer(){ pauseTimer(); initClock(); }
+
+/* Correct the wall-clock timer when returning to the foreground: recompute remaining
+   from the deadline and catch up any sub-window alerts missed while the screen was off.
+   (The Screen Wake Lock itself is managed by refreshWakeLock above.) */
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState==='visible') timerRefresh();
+});
 function nextPeriod(){
   var g=currentGame(); if(!g) return;
   if(!g.live) g.live={period:0};
@@ -3561,7 +3659,56 @@ function boot(){
   switchTab('roster');
   try{ if(checkHashImport()) return; }catch(e){}
 }
-document.addEventListener('DOMContentLoaded', boot);
+function bootWithRecovery(){
+  requestPersistentStorage();
+  var proceed=function(){ try{ boot(); }catch(e){ boot(); } };
+  var ls=null;
+  try{ ls=localStorage.getItem(LS_KEY); }catch(e){}
+  if(ls){ proceed(); return; }               // localStorage intact — normal path
+  // localStorage empty/wiped: try to recover the durable IndexedDB mirror first.
+  var done=false, finish=function(){ if(done) return; done=true; proceed(); };
+  try{
+    idbGet(LS_KEY).then(function(backup){
+      if(typeof backup==='string' && backup){
+        __lmRestoredRaw=backup;
+        try{ localStorage.setItem(LS_KEY, backup); }catch(e){}   // rehydrate if possible
+      }
+      finish();
+    }).catch(finish);
+  }catch(e){ finish(); }
+  setTimeout(finish, 1500);                   // never block boot on IDB
+}
+document.addEventListener('DOMContentLoaded', bootWithRecovery);
+
+/* ---------- PWA: service worker registration + update prompt ---------- */
+(function(){
+  if(!('serviceWorker' in navigator)) return;
+  var reloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange', function(){
+    if(reloaded) return; reloaded=true; location.reload();
+  });
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      if(reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg.waiting);
+      reg.addEventListener('updatefound', function(){
+        var nw=reg.installing; if(!nw) return;
+        nw.addEventListener('statechange', function(){
+          if(nw.state==='installed' && navigator.serviceWorker.controller) showUpdateBanner(nw);
+        });
+      });
+    }).catch(function(){});
+  });
+  function showUpdateBanner(worker){
+    if(document.getElementById('lm-update')) return;
+    var b=document.createElement('div'); b.id='lm-update';
+    b.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:9999;background:#0d7a45;color:#fff;padding:10px 14px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.3);display:flex;gap:10px;align-items:center;font-size:15px;';
+    var t=document.createElement('span'); t.textContent='Update available';
+    var btn=document.createElement('button'); btn.textContent='Reload';
+    btn.style.cssText='background:#fff;color:#0d7a45;border:0;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;';
+    btn.onclick=function(){ try{ worker.postMessage({type:'SKIP_WAITING'}); }catch(e){ location.reload(); } };
+    b.appendChild(t); b.appendChild(btn); document.body.appendChild(b);
+  }
+})();
 
 /* Expose a few internals for testing in a desktop browser */
 window.__LM__ = {
