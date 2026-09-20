@@ -169,8 +169,13 @@
   .pc-dot.on{background:var(--accent)} .pc-dot.off{background:var(--bad)}
   .pc-div{align-self:center;font-size:10px;font-weight:800;color:var(--muted);border-left:2px solid var(--line);padding-left:7px;margin-left:1px}
   /* Live */
-  .clock{font-variant-numeric:tabular-nums;font-weight:800;font-size:clamp(64px,18vw,150px);text-align:center;line-height:1;letter-spacing:2px}
+  .clock{font-variant-numeric:tabular-nums;font-weight:800;font-size:clamp(64px,18vw,150px);text-align:center;line-height:1;letter-spacing:2px;cursor:pointer}
   .clock.warn{color:var(--warn)} .clock.done{color:var(--bad)}
+  .clockedit{color:var(--muted);font-weight:700;font-size:12px;text-align:center;margin-top:2px}
+  .alarmbanner{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(88px + var(--safe-b));width:calc(100% - 24px);max-width:560px;background:var(--bad);color:#fff;border-radius:14px;padding:14px 16px;z-index:70;display:none;box-shadow:0 8px 24px rgba(0,0,0,.35);align-items:center;gap:12px;animation:pulse 1s infinite}
+  .alarmbanner.show{display:flex}
+  .alarmbanner .amsg{flex:1;font-weight:800;font-size:16px;line-height:1.2}
+  .alarmbanner .adismiss{background:#fff;color:var(--bad);border:none;border-radius:10px;padding:12px 16px;font-weight:800;font-size:15px;min-height:var(--tap);cursor:pointer}
   .subcard{border:3px solid var(--warn);border-radius:16px;padding:14px;background:#fff7ec;margin-bottom:12px;animation:pulse 1s infinite}
   .repairbar{border:2px solid var(--warn);background:#fff7ec;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-weight:700;font-size:14px}
   .starthint{color:var(--accent-d);font-weight:800;font-size:15px;text-align:center;margin-top:10px;padding:8px 10px;border:2px dashed var(--accent);border-radius:12px;animation:pulse 1.4s infinite}
@@ -529,6 +534,7 @@
         <span class="pill" id="livePeriodPill">Period 1</span>
       </div>
       <div class="clock" id="clock">00:00</div>
+      <div class="clockedit" id="clockEditHint">tap the clock to set the time</div>
       <div class="row" style="justify-content:center;margin-top:6px">
         <button class="btn" id="startBtn">▶ Start</button>
         <button class="btn sec" id="pauseBtn">⏸ Pause</button>
@@ -577,6 +583,10 @@
 
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
+<div class="alarmbanner" id="alarmBanner">
+  <div class="amsg" id="alarmMsg">🔄 Time to make the subs!</div>
+  <button class="adismiss" id="alarmDismiss" type="button">Dismiss</button>
+</div>
 <div id="printRoot" aria-hidden="true"></div>
 
 <script>
@@ -2406,7 +2416,12 @@ function renderSubCard(g, gi){
 /* Timer controls */
 function setClock(){
   var g=currentGame(); if(!g) return;
-  var mm=Math.floor(timer.remaining/60), ss=timer.remaining%60;
+  var periodLen=g.minutes*60;
+  // Football-style count-up across the whole match: each period continues from where the
+  // previous ended, so Half 2 of a 70-min game starts at 35:00 (not 0:00).
+  var within=Math.max(0, Math.min(periodLen, periodLen-timer.remaining));
+  var elapsed=(currentLivePeriod()*periodLen)+within;
+  var mm=Math.floor(elapsed/60), ss=elapsed%60;
   var c=document.getElementById('clock');
   c.textContent=(mm<10?'0':'')+mm+':'+(ss<10?'0':'')+ss;
   c.classList.toggle('warn', timer.remaining<=WARN_SECONDS && timer.remaining>0);
@@ -2418,6 +2433,53 @@ function updateStartHint(){
   var g=currentGame();
   var fresh = g && g.plan && g.plan.segments && g.minutes && !timer.running && timer.remaining===g.minutes*60;
   h.style.display = fresh? 'block':'none';
+}
+/* Set the clock to a specific elapsed time within the current period. Keeps the
+   wall-clock deadline, sub windows, and already-fired alerts consistent — used when
+   the clock was started late (e.g. "take 2 min off, I forgot to start it"). */
+function applyElapsed(elapsedSec){
+  var g=currentGame(); if(!g || !g.minutes) return;
+  var total=g.minutes*60;
+  elapsedSec=Math.max(0, Math.min(total, Math.round(elapsedSec)));
+  timer.remaining=total-elapsedSec;
+  if(timer.running){ timer.deadline=Date.now()+timer.remaining*1000; }
+  // Re-sync which sub window we're in and mark passed windows as already alerted so
+  // jumping the clock forward doesn't retroactively fire their reminders.
+  if(g.plan){
+    var segs=periodSegs(g, currentLivePeriod());
+    var period=currentLivePeriod();
+    var idx=0;
+    while(idx<segs.length-1 && segs[idx].endSec<=elapsedSec) idx++;
+    timer.segLocal=idx;
+    if(segs[idx]) timer.seg=segs[idx].gi;
+    timer.warnedSegs=timer.warnedSegs||{};
+    for(var i=0;i<idx;i++){ timer.warnedSegs[period+':'+i]=1; }
+  }
+  stopAlarm();
+  setClock(); renderLive();
+}
+function editClock(){
+  var g=currentGame();
+  if(!g || !g.minutes){ toast('Open a game with a plan first'); return; }
+  var fmt=function(s){ var m=Math.floor(s/60); s=s%60; return (m<10?'0':'')+m+':'+(s<10?'0':'')+s; };
+  var periodLen=g.minutes*60;
+  var base=currentLivePeriod()*periodLen;      // match seconds at the start of this period
+  var within=Math.max(0, Math.min(periodLen, periodLen-timer.remaining));
+  var half=(g.periods===2);
+  var label=half?'half':'period';
+  var input=prompt('Set match time (mm:ss). This '+label+' runs '+fmt(base)+'–'+fmt(base+periodLen)+'.', fmt(base+within));
+  if(input===null) return;
+  input=(''+input).trim();
+  var secs=null;
+  if(/^\d+:\d{1,2}$/.test(input)){
+    var parts=input.split(':'); secs=parseInt(parts[0],10)*60+parseInt(parts[1],10);
+  } else if(/^\d+(\.\d+)?$/.test(input)){
+    secs=Math.round(parseFloat(input)*60); // plain number = minutes
+  }
+  if(secs===null || isNaN(secs)){ toast('Enter a time like 37:00'); return; }
+  if(secs<base || secs>base+periodLen){ toast('That time is outside this '+label+' ('+fmt(base)+'–'+fmt(base+periodLen)+')'); return; }
+  applyElapsed(secs-base);
+  toast('⏱️ Clock set to '+fmt(secs));
 }
 function initClock(){
   var g=currentGame();
@@ -2461,7 +2523,7 @@ function processBoundaries(){
     if((c2.endSec-elapsed)<=0){ timer.segLocal++; timer.seg=segs[timer.segLocal].gi; advanced=true; }
     else break;
   }
-  if(advanced){ beep(2); vibrate([200,100,200]); toast('🔄 Sub window — make the subs'); renderLive(); }
+  if(advanced){ toast('🔄 Sub window — make the subs'); startAlarm('sub','🔄 Time to make the subs!'); renderLive(); }
 }
 function timerRefresh(){
   if(!timer.running) return;
@@ -2492,6 +2554,7 @@ function pauseTimer(){
   timer.running=false;
   if(timer.handle){ clearInterval(timer.handle); timer.handle=null; }
   timer.deadline=0;
+  stopAlarm();
   updateStartHint();
 }
 function resetTimer(){ pauseTimer(); initClock(); }
@@ -2524,6 +2587,7 @@ function prevPeriod(){
 function ackSubs(){
   var g=currentGame(); if(!g||!g.plan||!g.plan.segments) return;
   if(!g.live) g.live={period:0};
+  stopAlarm();
   var gi=currentLiveSeg();
   var to=gi+1;
   if(to>=g.plan.segments.length){ toast('No more subs'); return; }
@@ -2535,8 +2599,12 @@ function ackSubs(){
   if(timer.segLocal < segs.length-1){
     timer.segLocal++; timer.seg=segs[timer.segLocal].gi;
     save(); renderLive();
+  } else if(timer.remaining<=0){
+    nextPeriod(); // period clock has ended -> roll into the next period
   } else {
-    nextPeriod(); // last window of the period -> roll into the next period
+    // Last window of the period (e.g. halftime subs) but the clock is still running.
+    // Just record the subs; the period rolls over when the clock reaches the whistle.
+    save(); renderLive();
   }
   toast('✅ Subs made');
 }
@@ -2566,11 +2634,35 @@ function beep(times){
   }catch(e){}
 }
 function vibrate(pattern){ try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(e){} }
+
+/* Persistent alarm: keeps beeping + vibrating (and shows a dismissable banner) until
+   the user acknowledges. Used when it's time to make subs, or when a period ends, so
+   the reminder can't be missed by a quick auto-fading toast. */
+var alarm={ active:false, handle:null, kind:null };
+function startAlarm(kind, msg){
+  var banner=document.getElementById('alarmBanner');
+  var mEl=document.getElementById('alarmMsg');
+  if(mEl) mEl.textContent=msg;
+  if(banner) banner.classList.add('show');
+  alarm.active=true; alarm.kind=kind;
+  if(alarm.handle) clearInterval(alarm.handle);
+  var pattern = kind==='end' ? [300,120,300,120,300] : [250,120,250];
+  var pulse=function(){ beep(kind==='end'?3:2); vibrate(pattern); };
+  pulse();
+  alarm.handle=setInterval(pulse, 2500);
+}
+function stopAlarm(){
+  if(alarm.handle){ clearInterval(alarm.handle); alarm.handle=null; }
+  alarm.active=false; alarm.kind=null;
+  try{ if(navigator.vibrate) navigator.vibrate(0); }catch(e){}
+  var banner=document.getElementById('alarmBanner');
+  if(banner) banner.classList.remove('show');
+}
 function triggerSubAlert(){
   var g=currentGame(); var subs=computeSubs(g, currentLiveSeg());
   if(subs && subs.length){ beep(2); vibrate([200,100,200]); toast('⏱️ Subs coming up!'); }
 }
-function alertEnd(){ beep(3); vibrate([300,120,300,120,300]); toast('Period over — tap Next period'); }
+function alertEnd(){ toast('Period over — tap Next period'); startAlarm('end','⏱️ Period over — tap Next period'); }
 
 /* Mark player OUT mid-game -> replan remaining sub windows */
 function openMarkOut(){
@@ -3137,6 +3229,8 @@ function wire(){
   document.getElementById('nextBtn').onclick=nextPeriod;
   document.getElementById('prevBtn').onclick=prevPeriod;
   document.getElementById('markOutBtn').onclick=openMarkOut;
+  document.getElementById('clock').onclick=editClock;
+  document.getElementById('alarmDismiss').onclick=stopAlarm;
 
   var pv=document.getElementById('pitchPreview');
   if(pv) pv.onchange=function(){ ui.pitchPreview=pv.checked; var g=currentGame(); if(g) renderPlanPitch(g); };
