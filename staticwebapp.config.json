@@ -1,9 +1,15 @@
 {
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/api/*", "/*.json", "/*.png", "/*.ico", "/*.svg"]
+    "exclude": ["/api/*", "/*.json", "/*.png", "/*.ico", "/*.svg", "/sw.js", "/*.webmanifest"]
+  },
+  "mimeTypes": {
+    ".json": "application/json",
+    ".webmanifest": "application/manifest+json"
   },
   "routes": [
+    { "route": "/sw.js", "headers": { "cache-control": "no-cache, max-age=0" } },
+    { "route": "/manifest.json", "headers": { "cache-control": "no-cache, max-age=0" } },
     { "route": "/api/me", "allowedRoles": ["authenticated"] },
     { "route": "/api/teams", "methods": ["POST"], "allowedRoles": ["authenticated"] },
     { "route": "/api/invite", "methods": ["POST"], "allowedRoles": ["authenticated"] },

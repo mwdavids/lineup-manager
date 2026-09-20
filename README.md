@@ -1,9 +1,11 @@
 # Lineup Manager — U13 Girls 11v11 (4-3-3)
 
 A single-file, **fully offline** web app for coaching a U13 girls 11v11 soccer team in a
-fixed **4-3-3** from an iPad on the sideline. Everything lives in one `index.html` — inline
-CSS + vanilla JavaScript, **no build step, no server, no network requests**. All data is
-stored locally in your browser via `localStorage`.
+fixed **4-3-3** from an iPad on the sideline. All the app logic lives in one `index.html` —
+inline CSS + vanilla JavaScript, **no build step and no server required**. It's also an
+installable **PWA**: a small web manifest, service worker (`sw.js`), and app icons sit
+alongside `index.html` for reliable offline launch and Home Screen install. All data is
+stored locally on your device (`localStorage`, with an automatic **IndexedDB** backup).
 
 > **Canonical app URL:** **https://blue-moss-0e0958f0f.5.azurestaticapps.net** (Azure Static
 > Web Apps — includes optional [cloud sync](#cloud-sync-azure--optional)).
@@ -48,18 +50,32 @@ your existing roster maps cleanly without relabelling anyone.
 
 For a full-screen, app-like experience:
 
-1. Open `index.html` in Safari.
+1. Open `index.html` (or the hosted URL) in Safari.
 2. Tap the **Share** button → **Add to Home Screen** → **Add**.
 3. Launch it from the new **Lineup** icon. It opens full-screen with no Safari chrome —
    perfect for the sideline.
 
+The app is a **PWA (Progressive Web App)**: it ships a web manifest and a service worker,
+so once opened it's cached for **reliable offline launch** (not just offline *use*), and on
+Android / desktop Chrome or Edge you'll get a native **Install** prompt too. When a new
+version is deployed you'll see a small **"Update available — Reload"** banner.
+
 ### Offline & data notes
 
-- All roster and game data is saved in this browser's **`localStorage`**. It persists
-  between sessions on the same device/browser.
+- Roster and game data is saved in this browser and, for durability, **mirrored to
+  IndexedDB** with a request for **persistent storage**. If Safari ever evicts the primary
+  `localStorage` copy (it can, under storage pressure or after long inactivity), the app
+  **automatically recovers your data from the IndexedDB backup** on next launch.
 - Because storage is local: data is **per-device**. To move a lineup or roster to another
   device (e.g. plan on your computer, coach from your iPad), use **Sync between devices**
   below — no account or server required.
+- The live sideline timer is **wall-clock based** and holds a **Screen Wake Lock** while
+  running, so it stays accurate and keeps the iPad awake during a game — and it **catches
+  up any sub-window alerts** if the screen did sleep or you switched apps.
+  - *iOS limitation (honest note):* even as a PWA, iOS won't run timers or play alert
+    sounds while the app is **fully backgrounded or the device is locked**. The Wake Lock
+    keeps the screen on for sideline use; it is not a native background alarm. Keep the app
+    foregrounded during the game for audible alerts.
 - Clearing Safari website data (or "Add to Home Screen" vs. regular Safari being treated
   as separate storage) will reset the app. Keep one launch method for continuity.
 - The pre-seeded 19-player roster loads automatically the first time.
