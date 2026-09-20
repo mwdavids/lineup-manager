@@ -323,7 +323,23 @@
     <div class="panel">
       <h2 style="margin:0 0 4px">Plan preferences</h2>
       <div class="muted small" style="margin-bottom:10px">Steer how the planner balances the team. Applied on the next Generate / Repair.</div>
-      <label class="fld small">Keeper's outfield time
+      <label class="fld small">Equal playing time
+        <button type="button" class="info" data-info="How hard the planner equalizes total minutes. Balanced spreads time evenly (default). Relaxed lets per-player minute weights and skill ratings matter more. Off stops equalizing — your best-fit XI can play the whole game, e.g. a must-win tournament.">ⓘ</button>
+      </label>
+      <select id="fairSel">
+        <option value="1">Balanced — equal minutes for all (default)</option>
+        <option value="0.5">Relaxed — let weights/skill matter more</option>
+        <option value="0">Off — play best XI, no equalizing</option>
+      </select>
+      <label class="fld small" style="margin-top:10px">Minimum playing time
+        <button type="button" class="info" data-info="Guarantees every available player at least this share of the game before extra minutes go anywhere else. Half is the default (league rules). Off removes the floor — use with care for tournaments.">ⓘ</button>
+      </label>
+      <select id="minPlaySel">
+        <option value="0.5">At least a half (default)</option>
+        <option value="0.25">At least a quarter</option>
+        <option value="0">Off — no minimum</option>
+      </select>
+      <label class="fld small" style="margin-top:10px">Keeper's outfield time
         <button type="button" class="info" data-info="How much of the game your keepers also play out of goal. Balanced keeps them involved; Rest more gives keepers a lighter total.">ⓘ</button>
       </label>
       <select id="gkFairSel">
@@ -332,12 +348,20 @@
         <option value="0.6">Rest more — lighter total for keepers</option>
       </select>
       <label class="fld small" style="margin-top:10px">Position stability
-        <button type="button" class="info" data-info="How strongly the planner keeps players in the same position between windows. Higher = fewer position changes; Lower = more rotation.">ⓘ</button>
+        <button type="button" class="info" data-info="How strongly the planner keeps players in the same position between windows. Higher = fewer on-field position changes, so subs come from the bench rather than shuffling players already on the field. Lower = more rotation.">ⓘ</button>
       </label>
       <select id="stabilitySel">
         <option value="1">Normal (default)</option>
-        <option value="1.6">High — keep positions steady</option>
+        <option value="1.6">High — keep positions steady, sub from the bench</option>
         <option value="0.5">Low — rotate positions more</option>
+      </select>
+      <label class="fld small" style="margin-top:10px">Freshness
+        <button type="button" class="info" data-info="Spreads playing time so the same kids don't sit two windows in a row — favoring non-sequential rest to keep everyone fresh. Normal is the default. Never overrides equal minutes or the everyone-plays-a-half guarantee.">ⓘ</button>
+      </label>
+      <select id="freshSel">
+        <option value="1">Normal (default)</option>
+        <option value="2">High — spread rest, avoid back-to-back benching</option>
+        <option value="0">Off — don't steer bench spacing</option>
       </select>
       <label class="fld small" style="margin-top:10px">Strength balancing
         <button type="button" class="info" data-info="Spreads strong and developing players across sub windows so no single lineup is very weak. Uses each player’s optional skill rating from the roster and never changes anyone’s total minutes. Has no effect until you rate players.">ⓘ</button>
@@ -393,6 +417,7 @@
             <span id="syncWhoami" class="muted"></span>
             <button class="btn sec sm" id="syncLogoutBtn">Sign out</button>
           </div>
+          <div id="syncNoTeamHint" class="muted small hidden" style="margin-top:8px"></div>
           <div id="syncTeamsWrap" style="margin-top:8px">
             <label class="fld grow">Your teams
               <select id="syncTeamsSel"></select>
@@ -930,6 +955,12 @@ function generatePlan(game, opts){
   // outfield time rather than being pinned to equal totals exactly.
   var GK_FAIR = (game.gkFair!=null? game.gkFair : 0.85);
   var stabW = (game.stabilityWeight!=null? game.stabilityWeight : 1);
+  var freshW = (game.freshWeight!=null? game.freshWeight : 1);
+  // Configurable "hard" rules. Defaults reproduce the built-in behavior exactly:
+  //   fairWeight   1   = equalize total minutes for everyone (0 = play best XI, no equalizing)
+  //   minPlayFrac  0.5 = guarantee every available player at least half the game (0 = no floor)
+  var fairW = (game.fairWeight!=null? game.fairWeight : 1);
+  var minPlayFrac = (game.minPlayFrac!=null? game.minPlayFrac : 0.5);
   var fldMin={}, gkMin={};
   state.players.forEach(function(pl){ fldMin[pl.id]=0; gkMin[pl.id]=0; });
   if(opts.startGkMin){ for(var k2 in opts.startGkMin) gkMin[k2]=opts.startGkMin[k2]||0; }
@@ -997,11 +1028,11 @@ function generatePlan(game, opts){
   }
 
   function minWeight(id){ var p=byId(id); var w=p&&p.minutesWeight; return w==='more'?0.82:(w==='less'?1.18:1); }
-  function loadOf(id){ return ((fldMin[id]||0)*10 + (gkScheduledTotal[id]||0)*10*GK_FAIR) * minWeight(id); }
+  function loadOf(id){ return ((fldMin[id]||0)*10 + (gkScheduledTotal[id]||0)*10*GK_FAIR) * minWeight(id) * fairW; }
   // Suffix sum of window minutes: suffixMin[i] = minutes available from segment i to end.
   var suffixMin=new Array(segMeta.length+1).fill(0);
   for(var qi=segMeta.length-1; qi>=0; qi--) suffixMin[qi]=suffixMin[qi+1]+segMeta[qi].dur;
-  var halfThreshold=(game.periods*game.minutes)/2;   // "one half" of total game time
+  var halfThreshold=(game.periods*game.minutes)*minPlayFrac;   // minimum guaranteed playing time
 
   // Position-scarcity nudge: reserve scarce slots for players who have no other
   // option. captiveCount[key] = how many available players can ONLY play that slot's
@@ -1044,6 +1075,7 @@ function generatePlan(game, opts){
   // an available outfield player who would otherwise drop below one half of playing
   // time must be seated now. Keepers already earn a half in goal, so they are exempt.
   function halfGuaranteePull(pl, si){
+    if(minPlayFrac<=0) return 0;                      // guarantee disabled
     if((gkScheduledTotal[pl.id]||0)>0) return 0;      // keeper: guaranteed a half in goal
     var pm=(fldMin[pl.id]||0);
     if(pm>=halfThreshold-1e-6) return 0;              // already has a half
@@ -1074,7 +1106,7 @@ function generatePlan(game, opts){
   }
   function restPull(pl){
     var k=benchStreak[pl.id]||0; if(k<=0) return 0;
-    return -Math.min(k,3)*50;              // sat 1 window -> -50, 2 -> -100, 3+ -> -150
+    return -Math.min(k,3)*50*freshW;       // sat 1 window -> -50, 2 -> -100, 3+ -> -150 (scaled by Freshness)
   }
 
   for(var si=fromSeg; si<segMeta.length; si++){
@@ -1421,6 +1453,9 @@ function loadGameIntoSetup(){
   updateGameLabel(); renderGameTotals();
   var gf=document.getElementById('gkFairSel'); if(gf) gf.value=String(g? (g.gkFair!=null?g.gkFair:0.85):0.85);
   var st=document.getElementById('stabilitySel'); if(st) st.value=String(g? (g.stabilityWeight!=null?g.stabilityWeight:1):1);
+  var fr=document.getElementById('freshSel'); if(fr) fr.value=String(g? (g.freshWeight!=null?g.freshWeight:1):1);
+  var fw=document.getElementById('fairSel'); if(fw) fw.value=String(g? (g.fairWeight!=null?g.fairWeight:1):1);
+  var mp=document.getElementById('minPlaySel'); if(mp) mp.value=String(g? (g.minPlayFrac!=null?g.minPlayFrac:0.5):0.5);
   var bs=document.getElementById('balanceSel'); if(bs) bs.value=(g && g.balanceStrength==='off')?'off':'auto';
   renderAvailability(); renderSavedGames();
 }
@@ -2117,7 +2152,30 @@ function swapSlots(si, a, b){
 }
 
 /* ----- Live ----- */
-var timer={ remaining:0, running:false, handle:null, warned:false, segLocal:0, seg:0 };
+var timer={ remaining:0, running:false, handle:null, warned:false, segLocal:0, seg:0, gameId:null };
+
+// ---- Screen Wake Lock: keep the device awake while the Live tab is showing, so the
+// game clock stays visible and the screen never locks mid-match. Held only on Live to
+// save battery elsewhere; the OS auto-releases it when the app is hidden, so we
+// re-acquire on visibilitychange. No-ops gracefully where the API is unsupported.
+var wakeLock={ sentinel:null };
+function wakeWanted(){ return ui.tab==='live'; }
+function refreshWakeLock(){
+  try{
+    if(wakeWanted() && document.visibilityState==='visible'){
+      if(!wakeLock.sentinel && navigator.wakeLock && navigator.wakeLock.request){
+        navigator.wakeLock.request('screen').then(function(s){
+          wakeLock.sentinel=s;
+          s.addEventListener('release', function(){ wakeLock.sentinel=null; });
+        }).catch(function(){});
+      }
+    } else if(wakeLock.sentinel){
+      var s=wakeLock.sentinel; wakeLock.sentinel=null;
+      try{ s.release(); }catch(e){}
+    }
+  }catch(e){}
+}
+document.addEventListener('visibilitychange', refreshWakeLock);
 
 function currentLivePeriod(){ var g=currentGame(); return g && g.live? (g.live.period||0):0; }
 // global segments belonging to a period, with second offsets within the period
@@ -2270,8 +2328,16 @@ function updateStartHint(){
 function initClock(){
   var g=currentGame();
   timer.remaining = g? g.minutes*60 : 0; timer.warned=false; timer.segLocal=0;
+  timer.gameId = g? g.id : null;
   timer.seg = g && g.plan? firstSegOfPeriod(g, currentLivePeriod()) : 0;
   setClock(); renderLive();
+}
+// A clock is "in progress" (must NOT be reset by re-entering the Live tab) when it
+// belongs to the current game and is either running or partway through the match.
+function clockInProgress(){
+  var g=currentGame();
+  if(!g || timer.gameId!==g.id) return false;
+  return timer.running || (g.minutes && timer.remaining>0 && timer.remaining < g.minutes*60);
 }
 function tick(){
   if(!timer.running) return;
@@ -2842,7 +2908,12 @@ function switchTab(name){
   if(name==='roster') renderRoster();
   if(name==='setup'){ loadGameIntoSetup(); }
   if(name==='plan') renderPlan();
-  if(name==='live'){ initClock(); renderLive(); }
+  if(name==='live'){
+    // Re-entering Live must not reset a clock that's already running or mid-match.
+    if(clockInProgress()){ setClock(); renderLive(); }
+    else { initClock(); }
+  }
+  refreshWakeLock();
   window.scrollTo(0,0);
 }
 function openSheet(){ document.getElementById('overlay').classList.add('show'); }
@@ -2877,6 +2948,9 @@ function wire(){
   document.getElementById('allOutBtn').onclick=function(){ var g=ensureGame(); state.players.forEach(function(p){g.availability[p.id]=false;}); save(); renderAvailability(); };
   document.getElementById('gkFairSel').onchange=function(){ var g=ensureGame(); g.gkFair=parseFloat(this.value); save(); };
   document.getElementById('stabilitySel').onchange=function(){ var g=ensureGame(); g.stabilityWeight=parseFloat(this.value); save(); };
+  document.getElementById('freshSel').onchange=function(){ var g=ensureGame(); g.freshWeight=parseFloat(this.value); save(); };
+  document.getElementById('fairSel').onchange=function(){ var g=ensureGame(); g.fairWeight=parseFloat(this.value); save(); };
+  document.getElementById('minPlaySel').onchange=function(){ var g=ensureGame(); g.minPlayFrac=parseFloat(this.value); save(); };
   document.getElementById('balanceSel').onchange=function(){ var g=ensureGame(); g.balanceStrength=this.value; save(); };
   ['gameName','gameDuration','gameSubs'].forEach(function(idn){
     document.getElementById(idn).onchange=function(){ ensureGame(); renderGameTotals(); renderSavedGames(); updateGameLabel(); };
@@ -3105,6 +3179,16 @@ function accRenderUI(){
       if(want) sel.value=want;
     }
   }
+  var hint=document.getElementById('syncNoTeamHint');
+  if(hint){
+    if(Sync.connected){ hint.classList.add('hidden'); hint.textContent=''; }
+    else {
+      hint.classList.remove('hidden');
+      hint.textContent = a.teams.length
+        ? 'Signed in — pick a team above and Open it to start syncing this device.'
+        : 'Signed in, but not syncing yet. Create a team below to sync your roster, games, and settings across your devices.';
+    }
+  }
 }
 
 async function syncFetch(path, opts){
@@ -3209,7 +3293,8 @@ async function accCreateTeam(name){
   await accOpenTeam(r.data.teamId, r.data.name);
 }
 // Open an account team: pull it, merge local in the first time, then push + poll.
-async function accOpenTeam(teamId, teamName){
+async function accOpenTeam(teamId, teamName, opts){
+  opts=opts||{};
   if(!Sync.account.loggedIn){ toast('Sign in first'); return false; }
   // Switch away from any current connection first.
   if(Sync.connected){ syncStopPoll(); if(Sync._pushT){ clearTimeout(Sync._pushT); Sync._pushT=null; } }
@@ -3218,12 +3303,19 @@ async function accOpenTeam(teamId, teamName){
   syncSetStatus('syncing');
   var r;
   try{ r=await accFetch('/team?teamId='+encodeURIComponent(teamId)); }
-  catch(e){ syncSetStatus('error','Could not reach the server'); return false; }
-  if(r.status===401){ Sync.connected=false; toast('Please sign in again'); accSignIn(); return false; }
-  if(r.status===403){ Sync.connected=false; syncSetStatus('off'); toast('You are not a member of that team'); return false; }
-  if(r.status!==200 || !r.data){ Sync.connected=false; syncSetStatus('off'); toast((r.data&&r.data.message)||'Could not open team'); return false; }
+  catch(e){ Sync.connected=false; syncSetStatus(opts.silent?'off':'error', opts.silent?'':'Could not reach the server'); return false; }
+  if(r.status===401){ Sync.connected=false; syncSetStatus('off'); if(!opts.silent){ toast('Please sign in again'); accSignIn(); } return false; }
+  if(r.status===403){ Sync.connected=false; syncSetStatus('off'); if(!opts.silent) toast('You are not a member of that team'); return false; }
+  if(r.status!==200 || !r.data){ Sync.connected=false; syncSetStatus('off'); if(!opts.silent) toast((r.data&&r.data.message)||'Could not open team'); return false; }
   if(r.data.name) Sync.teamName=r.data.name;
   if(r.data.role) Sync.role=r.data.role;
+  if(opts.silent){
+    // Returning device auto-reconnect: take the team's latest data, no merge prompt.
+    if(r.data.data) syncApply(r.data.data);
+    Sync.baseVersion=r.data.version||1; Sync.dirty=false; Sync.lastSyncAt=Date.now();
+    syncSaveConfig(); syncSetStatus('synced'); syncStartPoll();
+    return true;
+  }
   if(r.data.data){
     var doMerge = (typeof confirm!=='function') ? true : confirm('This team already has saved data.\n\nOK = merge it with what’s on this device (recommended).\nCancel = keep only this device’s data and overwrite the team.');
     if(doMerge) syncMergeIn(r.data.data);
@@ -3344,6 +3436,22 @@ function syncStartPoll(){
 }
 function syncStopPoll(){ if(Sync._pollT){ clearInterval(Sync._pollT); Sync._pollT=null; } }
 
+// After sign-in, open the user's last-used / default team automatically so being
+// signed in also means being connected. A returning device (we have its saved team)
+// reconnects silently; a first-time device with exactly one team opens it with the
+// normal one-time merge; multiple teams with no saved preference are left for the
+// user to pick from the dropdown.
+function autoOpenPreferredTeam(preferredId){
+  var teams=(Sync.account && Sync.account.teams) || [];
+  if(!teams.length) return;
+  function has(id){ return teams.some(function(t){ return t.id===id; }); }
+  var want = (preferredId && has(preferredId)) ? preferredId
+           : (teams.length===1 ? teams[0].id : null);
+  if(!want) return;
+  var t=teams.filter(function(x){ return x.id===want; })[0];
+  accOpenTeam(want, t? t.name : '', { silent: (want===preferredId) });
+}
+
 function initSync(){
   syncLoadConfig();
   renderSyncUI();
@@ -3365,24 +3473,31 @@ function initSync(){
   var ib=document.getElementById('syncInviteBtn'); if(ib) ib.onclick=accInvite;
   window.addEventListener('online', function(){ if(Sync.connected){ if(Sync.dirty) syncPush(); else syncPull(); } });
   window.addEventListener('offline', function(){ if(Sync.connected) syncSetStatus('offline'); });
-  if(Sync.connected){
-    var t=document.getElementById('syncTeam'); if(t && Sync.mode==='passcode') t.value=Sync.teamId||'';
+  // Passcode teams reconnect immediately (no auth needed). Account teams wait for the
+  // sign-in check below, then auto-reopen so "signed in" also means "connected".
+  var preferredAccountTeam = (Sync.mode==='account' && Sync.teamId) ? Sync.teamId : null;
+  if(Sync.connected && Sync.mode==='passcode'){
+    var t=document.getElementById('syncTeam'); if(t) t.value=Sync.teamId||'';
     var e=document.getElementById('syncEndpoint'); if(e) e.value=Sync.endpoint||'';
     syncSetStatus(syncOnline()?'syncing':'offline');
     syncPull();          // pull others' changes on open
     syncStartPoll();
+  } else if(Sync.mode==='account'){
+    Sync.connected=false; syncSetStatus('off');   // not connected until the team is reopened below
   }
-  // Detect Microsoft sign-in, load teams, then handle any pending/URL invite.
-  accCheckAuth().then(function(){
+  // Detect Microsoft sign-in, load teams, handle any invite, then auto-open a team.
+  accCheckAuth().then(async function(){
     var pending=null; try{ pending=sessionStorage.getItem('lm.pendingJoin'); }catch(e){}
     if(pending && Sync.account.loggedIn){
       try{ sessionStorage.removeItem('lm.pendingJoin'); }catch(e){}
-      accFetch('/accept',{method:'POST',body:{code:pending}}).then(function(r){
-        if(r.status===200 && r.data && r.data.teamId){ accLoadTeams().then(function(){ accOpenTeam(r.data.teamId, r.data.name); }); }
-        else { toast((r.data&&r.data.message)||'That invite link is invalid or expired'); }
-      });
-    } else {
-      accAcceptFromUrl();
+      var r=await accFetch('/accept',{method:'POST',body:{code:pending}});
+      if(r.status===200 && r.data && r.data.teamId){ await accLoadTeams(); await accOpenTeam(r.data.teamId, r.data.name); }
+      else { toast((r.data&&r.data.message)||'That invite link is invalid or expired'); }
+      return;
+    }
+    var handledInvite = await accAcceptFromUrl();
+    if(!handledInvite && Sync.account.loggedIn && !Sync.connected){
+      autoOpenPreferredTeam(preferredAccountTeam);
     }
   });
   // keep the "x ago" label fresh
