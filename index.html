@@ -2795,12 +2795,21 @@ function importSharedRoster(payload, opts){
   opts=opts||{};
   var players=payload.players||[];
   if(!players.length){ toast('No roster in that data'); return false; }
-  var ok = (opts.silent || typeof confirm!=='function') ? true : confirm('Sync roster from this link ('+players.length+' players)?\nUpdates foot & positions for matching names and adds any new players. Your saved games are kept.');
+  var ok = (opts.silent || typeof confirm!=='function') ? true : confirm('Sync roster from this link ('+players.length+' players)?\nUpdates matching players (foot, positions, goalie preference, skill & minutes) and adds any new players. Your saved games are kept.');
   if(!ok) return false;
   var added=0, updated=0;
   players.forEach(function(p){
     var match=findPlayerByName(p.name);
-    if(match){ match.foot=p.foot; match.positions=(p.positions||[]).slice(); updated++; }
+    if(match){
+      // Copy every attribute from the shared player except its id, so the local
+      // player keeps its identity (games reference it) but picks up foot, positions,
+      // avoidGK, skill, minutesWeight, etc.
+      Object.keys(p).forEach(function(k){
+        if(k==='id') return;
+        match[k] = Array.isArray(p[k]) ? p[k].slice() : p[k];
+      });
+      updated++;
+    }
     else { state.players.push(_clone(p)); added++; }
   });
   save(); renderAll(); loadGameIntoSetup(); switchTab('roster');
