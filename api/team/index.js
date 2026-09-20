@@ -79,6 +79,14 @@ module.exports = async function (context, req) {
   if (!Number.isFinite(baseVersion)) return json(context, 400, { error: 'missing_base_version' });
   if (typeof body.data === 'undefined') return json(context, 400, { error: 'missing_data' });
 
+  // Account teams enforce editor-vs-viewer on writes (passcode teams have no roles).
+  if (store.isAccountTeam(team)) {
+    const role = store.roleOf(team, identity.uid);
+    if (!store.canWrite(role)) {
+      return json(context, 403, { error: 'read_only', message: 'Your role on this team is view-only.' });
+    }
+  }
+
   if (baseVersion !== (team.version || 1)) {
     // Stale write → hand back the latest so the client can resolve.
     return json(context, 409, { error: 'conflict', data: team.data || null, version: team.version || 1, updatedAt: team.updatedAt || null });

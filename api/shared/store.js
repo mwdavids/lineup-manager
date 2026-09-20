@@ -153,6 +153,11 @@ function roleOf(team, uid) {
   const m = (team.members || []).find((x) => x && x.uid === uid);
   return m ? m.role || 'member' : null;
 }
+// Which roles may mutate team data. owner and editor (and legacy 'member', which
+// predates the editor/viewer split) can write; an explicit 'viewer' is read-only.
+function canWrite(role) {
+  return role === 'owner' || role === 'editor' || role === 'member';
+}
 
 // Random, collision-checked team id (account teams get generated ids so nobody
 // can squat a friendly slug). Always passes normalizeTeamId().
@@ -382,6 +387,7 @@ module.exports = {
   isAccountTeam,
   isMember,
   roleOf,
+  canWrite,
   genTeamId,
   readUser,
   writeUser,
