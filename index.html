@@ -255,6 +255,25 @@
     #printRoot .psum{break-before:page;page-break-before:always;break-inside:avoid}
     #printRoot .psum table{table-layout:auto}
     #printRoot .psum td,#printRoot .psum th{text-align:left;font-size:11px;padding:3px 6px}
+    /* Per-period field view: players shown on a pitch (one pitch per sub window). */
+    #printRoot .pfields{display:flex;gap:14px;justify-content:center;align-items:flex-start;flex-wrap:wrap}
+    #printRoot .pfieldwrap{flex:1 1 0;max-width:4.2in;min-width:2.6in}
+    #printRoot .pfieldcap{font-size:12px;font-weight:800;text-align:center;margin:0 0 5px}
+    #printRoot .ppitch{position:relative;width:100%;aspect-ratio:2/3;max-height:6.3in;
+      border:1.5px solid #444;border-radius:8px;background:#e9f2ec;overflow:hidden;
+      -webkit-print-color-adjust:exact;print-color-adjust:exact}
+    #printRoot .ppitch svg{position:absolute;inset:0;width:100%;height:100%}
+    #printRoot .ptok{position:absolute;transform:translate(-50%,-50%);width:27%;text-align:center;
+      background:#fff;border:1px solid #444;border-top-width:3px;border-radius:6px;padding:2px 1px;
+      box-shadow:0 1px 2px rgba(0,0,0,.28);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    #printRoot .ptok .ppos{font-size:8.5px;font-weight:800;line-height:1.05}
+    #printRoot .ptok .pname{font-size:11px;font-weight:700;color:#000;line-height:1.12;word-break:break-word}
+    #printRoot .ptok.pmt{background:#f5f5f5;border-color:#aaa;border-style:dashed}
+    #printRoot .ptok.pmt .pname{color:#999}
+    #printRoot .ptok.l-gk{border-top-color:#e6a91e}  #printRoot .ptok.l-gk .ppos{color:#a8790c}
+    #printRoot .ptok.l-def{border-top-color:#2e78c8} #printRoot .ptok.l-def .ppos{color:#2e78c8}
+    #printRoot .ptok.l-mid{border-top-color:#1e9b5a} #printRoot .ptok.l-mid .ppos{color:#1e9b5a}
+    #printRoot .ptok.l-att{border-top-color:#e15f2d} #printRoot .ptok.l-att .ppos{color:#e15f2d}
   }
   #printRoot{display:none}
 </style>
@@ -2761,6 +2780,39 @@ function fmtGameDate(g){
   try{ if(g && g.date) return new Date(g.date).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }catch(e){}
   return '';
 }
+/* Simplified pitch markings for the print view (dark strokes on a light field). */
+function printPitchLines(){
+  var svg=svgEl('svg',{viewBox:'0 0 100 150', preserveAspectRatio:'none'});
+  var st={fill:'none', stroke:'#8fa598', 'stroke-width':'0.8'};
+  function add(tag,a){ var e=svgEl(tag,a); for(var k in st) e.setAttribute(k, st[k]); svg.appendChild(e); }
+  add('rect',{x:3,y:3,width:94,height:144,rx:2});
+  add('line',{x1:3,y1:75,x2:97,y2:75});
+  add('circle',{cx:50,cy:75,r:11});
+  // own goal box (bottom) + attack goal box (top)
+  add('rect',{x:24,y:126,width:52,height:21});
+  add('rect',{x:37,y:139,width:26,height:8});
+  add('rect',{x:24,y:3,width:52,height:21});
+  add('rect',{x:37,y:3,width:26,height:8});
+  return svg;
+}
+/* A print-friendly pitch for one global segment: each of the 11 slots is drawn
+   as a token at its formation position showing the player on the field there. */
+function printPitch(g, gi){
+  var seg=g.plan.segments[gi];
+  var pitch=el('div','ppitch');
+  pitch.appendChild(printPitchLines());
+  SLOTS.forEach(function(s){
+    var c=PITCH[s.key]; if(!c) return;
+    var pid=seg? seg.slots[s.key] : null;
+    var pl=pid? byId(pid) : null;
+    var tok=el('div','ptok l-'+LINE_OF[s.key]+(pl?'':' pmt'));
+    tok.style.left=c.x+'%'; tok.style.top=(c.y/1.5)+'%';
+    tok.appendChild(el('div','ppos', s.label));
+    tok.appendChild(el('div','pname', pl? shortName(pl) : '—'));
+    pitch.appendChild(tok);
+  });
+  return pitch;
+}
 function buildPrintView(g){
   var root=document.getElementById('printRoot');
   if(!root) return;
@@ -2779,23 +2831,14 @@ function buildPrintView(g){
     sec.appendChild(el('div','phdr', 'Formation 4-3-3 · '+periodName(g,p)+' · '+g.minutes+' min'));
     sec.appendChild(el('div','psub', 'Sub windows: '+wins.map(function(w){return w.startMin+'–'+w.endMin+"'";}).join('  ·  ')
       +'  ·  '+total+' min total game'));
-    var tbl=el('table');
-    var thead=el('thead'); var htr=el('tr');
-    htr.appendChild(el('th','pslot','Position'));
-    wins.forEach(function(w){ htr.appendChild(el('th','', w.startMin+'–'+w.endMin+"'"+' ('+w.dur+"')")); });
-    thead.appendChild(htr); tbl.appendChild(thead);
-    var tb=el('tbody');
-    SLOTS.forEach(function(slot){
-      var tr=el('tr');
-      tr.appendChild(el('th','pslot',slot.label));
-      wins.forEach(function(w){
-        var pid=g.plan.segments[w.gi].slots[slot.key];
-        var td=el('td', pid?'':'pempty', pid? (byId(pid)?byId(pid).name:'—') : '—');
-        tr.appendChild(td);
-      });
-      tb.appendChild(tr);
+    var fields=el('div','pfields');
+    wins.forEach(function(w){
+      var fw=el('div','pfieldwrap');
+      fw.appendChild(el('div','pfieldcap', w.startMin+'–'+w.endMin+"'"+' ('+w.dur+"')"));
+      fw.appendChild(printPitch(g, w.gi));
+      fields.appendChild(fw);
     });
-    tbl.appendChild(tb); sec.appendChild(tbl);
+    sec.appendChild(fields);
     root.appendChild(sec);
   });
   // minutes summary (compact) at the end
@@ -3317,11 +3360,12 @@ function initInfo(){
    the whole app state is the team's document; concurrency is version-based.
    ============================================================ */
 var LS_SYNC = 'lineupManager.sync.v1';
+var LS_SYNC_BASE = 'lineupManager.sync.base.v1';   // last-synced server snapshot (3-way merge ancestor)
 var Sync = {
   mode:'passcode', teamId:null, teamName:'', role:null,
-  passcode:null, endpoint:'', baseVersion:0,
+  passcode:null, endpoint:'', baseVersion:0, baseDoc:null,
   connected:false, status:'off', dirty:false, busy:false, readOnly:false,
-  lastSyncAt:0, lastError:'', _applying:false, _pushT:null, _pollT:null,
+  lastSyncAt:0, lastChangeAt:0, lastError:'', _applying:false, _pushT:null, _pollT:null,
   members:null, ownerId:null,
   account:{ checked:false, loggedIn:false, user:null, teams:[] }
 };
@@ -3338,7 +3382,26 @@ function syncLoadConfig(){
     Sync.endpoint=c.endpoint||''; Sync.baseVersion=c.baseVersion||0;
     Sync.dirty = !!c.dirty;   // durable outbox flag: unsynced local edits survive a relaunch
     Sync.connected = !!(c.teamId && (Sync.mode==='account' || c.passcode));
+    syncLoadBase();
   }catch(e){}
+}
+// The last-synced server document is the common ancestor used for 3-way merges.
+// It's persisted separately (it can be large) so relaunches can still merge
+// concurrent edits instead of clobbering them.
+function syncSaveBase(){
+  try{
+    if(!Sync.connected || !Sync.baseDoc){ localStorage.removeItem(LS_SYNC_BASE); return; }
+    localStorage.setItem(LS_SYNC_BASE, JSON.stringify({ teamId:Sync.teamId, version:Sync.baseVersion, doc:Sync.baseDoc }));
+  }catch(e){}
+}
+function syncLoadBase(){
+  try{
+    var raw=localStorage.getItem(LS_SYNC_BASE);
+    if(!raw){ Sync.baseDoc=null; return; }
+    var b=JSON.parse(raw);
+    // Only trust the snapshot if it belongs to the team we're reconnecting to.
+    Sync.baseDoc = (b && b.teamId===Sync.teamId && b.doc) ? b.doc : null;
+  }catch(e){ Sync.baseDoc=null; }
 }
 function syncSaveConfig(){
   try{
@@ -3384,6 +3447,71 @@ function syncMergeIn(data){
     var cp=remapGameIds(_clone(sg), map); cp.name=dedupeGameName(cp.name||'Game');
     state.games.push(cp); have[cp.id]=1;
   });
+}
+
+/* ---------- Three-way merge engine (issue #11) ----------
+ * The whole team document is synced as one blob. To avoid false conflicts when
+ * two coaches edit different things, we keep the last-synced server snapshot as a
+ * common ancestor and do a structural 3-way merge: base = ancestor, mine = local
+ * edits, theirs = the server's newer version.
+ *
+ * Rules (deterministic, so every device converges, and data-loss-averse):
+ *  - Only one side changed a value  → take that side.
+ *  - Both changed to different values (a real clash) → take THEIRS (the server),
+ *    so all devices merging against the same server version agree.
+ *  - Players and games are merged by id; a modification always beats a deletion.
+ *  - Nested maps (availability, pins) merge per key with the same rules.
+ */
+function _deepEq(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
+function _isPlainObj(v){ return v && typeof v==='object' && !Array.isArray(v); }
+function merge3(base, mine, theirs){
+  if(_deepEq(mine,theirs)) return _clone(mine);
+  if(_deepEq(base,mine))   return _clone(theirs);   // only theirs changed
+  if(_deepEq(base,theirs)) return _clone(mine);     // only mine changed
+  if(_isPlainObj(mine) && _isPlainObj(theirs)){
+    var b=_isPlainObj(base)?base:{}, out={}, seen={};
+    [b,mine,theirs].forEach(function(o){ Object.keys(o).forEach(function(k){ seen[k]=1; }); });
+    Object.keys(seen).forEach(function(k){
+      var inB=Object.prototype.hasOwnProperty.call(b,k);
+      var inM=Object.prototype.hasOwnProperty.call(mine,k);
+      var inT=Object.prototype.hasOwnProperty.call(theirs,k);
+      if(inM && inT){ out[k]=merge3(inB?b[k]:undefined, mine[k], theirs[k]); }
+      else if(inM){ if(!(inB && _deepEq(b[k],mine[k]))) out[k]=_clone(mine[k]); }   // theirs deleted; keep only if mine changed it
+      else if(inT){ if(!(inB && _deepEq(b[k],theirs[k]))) out[k]=_clone(theirs[k]); } // mine deleted; keep only if theirs changed it
+    });
+    return out;
+  }
+  return _clone(theirs);   // leaf / array clash → server wins (convergence)
+}
+function _byId(arr){ var m={}; (arr||[]).forEach(function(e){ if(e&&e.id!=null) m[e.id]=e; }); return m; }
+function mergeById(base, mine, theirs){
+  var bm=_byId(base), mm=_byId(mine), tm=_byId(theirs), order=[], seen={};
+  function take(arr){ (arr||[]).forEach(function(e){ if(e&&e.id!=null && !seen[e.id]){ seen[e.id]=1; order.push(e.id); } }); }
+  take(mine); take(theirs); take(base);   // preserve local order, then append remote-only, then base-only
+  var out=[];
+  order.forEach(function(id){
+    var inB=Object.prototype.hasOwnProperty.call(bm,id);
+    var inM=Object.prototype.hasOwnProperty.call(mm,id);
+    var inT=Object.prototype.hasOwnProperty.call(tm,id);
+    if(inM && inT){ out.push(merge3(inB?bm[id]:undefined, mm[id], tm[id])); }
+    else if(inM){ if(!(inB && _deepEq(bm[id],mm[id]))) out.push(_clone(mm[id])); }   // theirs removed; keep if mine modified (mod beats delete)
+    else if(inT){ if(!(inB && _deepEq(bm[id],tm[id]))) out.push(_clone(tm[id])); }   // mine removed; keep if theirs modified
+  });
+  return out;
+}
+// Merge two full team documents against their common ancestor.
+function mergeTeamDocs(base, mine, theirs){
+  base=base||{}; mine=mine||{}; theirs=theirs||{};
+  var out=_clone(theirs);   // preserve any unknown top-level fields from the server copy
+  out.players = mergeById(base.players, mine.players, theirs.players);
+  out.games   = mergeById(base.games,  mine.games,   theirs.games);
+  out.currentGameId = merge3(base.currentGameId, mine.currentGameId, theirs.currentGameId);
+  var sv=Math.max(base.seedVersion||0, mine.seedVersion||0, theirs.seedVersion||0);
+  if(sv) out.seedVersion=sv;
+  // Keep currentGameId pointing at a game that actually survived the merge.
+  var live={}; out.games.forEach(function(g){ if(g&&g.id!=null) live[g.id]=1; });
+  if(!out.currentGameId || !live[out.currentGameId]) out.currentGameId = out.games.length? out.games[out.games.length-1].id : null;
+  return out;
 }
 
 function syncSetStatus(s, msg){
@@ -3490,7 +3618,8 @@ async function syncConnect(teamId, passcode, endpoint){
   } else {
     Sync.baseVersion=r.data.version||1;
   }
-  syncSaveConfig();
+  Sync.baseDoc=_clone(r.data.data||{players:[],games:[]});
+  syncSaveConfig(); syncSaveBase();
   Sync.dirty=true;                 // push our (merged) state to establish the shared doc
   syncSetStatus('syncing');
   await syncPush();
@@ -3503,9 +3632,9 @@ function syncDisconnect(){
   syncStopPoll();
   if(Sync._pushT){ clearTimeout(Sync._pushT); Sync._pushT=null; }
   Sync.connected=false; Sync.teamId=null; Sync.teamName=''; Sync.role=null; Sync.passcode=null;
-  Sync.mode='passcode'; Sync.baseVersion=0; Sync.dirty=false; Sync.readOnly=false;
+  Sync.mode='passcode'; Sync.baseVersion=0; Sync.baseDoc=null; Sync.dirty=false; Sync.readOnly=false;
   Sync.members=null; Sync.ownerId=null;
-  syncSaveConfig();
+  syncSaveConfig(); syncSaveBase();
   syncSetStatus('off');
   toast('Disconnected — your data stays on this device');
 }
@@ -3597,8 +3726,8 @@ async function accOpenTeam(teamId, teamName, opts){
       return true;
     }
     if(r.data.data) syncApply(r.data.data);
-    Sync.baseVersion=serverVer; Sync.dirty=false; Sync.lastSyncAt=Date.now();
-    syncSaveConfig(); syncSetStatus('synced'); syncStartPoll();
+    Sync.baseVersion=serverVer; Sync.baseDoc=_clone(r.data.data||{players:[],games:[]}); Sync.dirty=false; Sync.lastSyncAt=Date.now();
+    syncSaveConfig(); syncSaveBase(); syncSetStatus('synced'); syncStartPoll();
     return true;
   }
   if(r.data.data){
@@ -3608,7 +3737,8 @@ async function accOpenTeam(teamId, teamName, opts){
   } else {
     Sync.baseVersion=r.data.version||1;
   }
-  syncSaveConfig();
+  Sync.baseDoc=_clone(r.data.data||{players:[],games:[]});
+  syncSaveConfig(); syncSaveBase();
   Sync.dirty=true;                 // push our (merged) state up
   await syncPush();
   syncStartPoll();
@@ -3736,11 +3866,13 @@ function syncHeaders(){ return Sync.mode==='account' ? {} : {'x-team-pass': Sync
 
 function syncOnLocalChange(){
   Sync.dirty=true;
+  Sync.lastChangeAt=Date.now();   // enter the fast-polling window
   syncSaveConfig();  // persist the outbox flag immediately so a crash before flush can't lose it
   if(Sync.status==='synced') syncSetStatus('synced'); // refresh "unsynced changes"
   renderSyncUI();
   if(Sync._pushT) clearTimeout(Sync._pushT);
   Sync._pushT=setTimeout(function(){ Sync._pushT=null; syncPush(); }, 1500);
+  syncSchedulePoll();
 }
 Sync.onLocalChange=syncOnLocalChange;
 
@@ -3749,8 +3881,9 @@ async function syncPush(){
   if(!syncOnline()){ syncSetStatus('offline'); return; }
   Sync.busy=true; if(Sync.status!=='conflict') syncSetStatus('syncing');
   try{
-    var r=await syncFetch('/team',{method:'PUT',headers:syncHeaders(),body:{teamId:Sync.teamId, data:syncData(), baseVersion:Sync.baseVersion}});
-    if(r.status===200){ Sync.baseVersion=r.data.version; Sync.dirty=false; Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSetStatus('synced'); }
+    var mine=syncData();
+    var r=await syncFetch('/team',{method:'PUT',headers:syncHeaders(),body:{teamId:Sync.teamId, data:mine, baseVersion:Sync.baseVersion}});
+    if(r.status===200){ Sync.baseVersion=r.data.version; Sync.baseDoc=mine; Sync.dirty=false; Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSaveBase(); syncSetStatus('synced'); }
     else if(r.status===409){ Sync.busy=false; return syncResolveConflict(r.data); }
     else if(r.status===401){ syncSetStatus('error','Passcode no longer valid'); }
     else if(r.status===403){ // view-only role — accept server truth, stop pushing local edits
@@ -3775,8 +3908,8 @@ async function syncPull(){
         Sync.busy=false; if(Sync.dirty){ return syncPush(); } return;
       }
       // Server advanced.
-      if(Sync.dirty){ Sync.busy=false; return syncResolveConflict(r.data); }   // local + server both changed
-      syncApply(r.data.data); Sync.baseVersion=r.data.version; Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSetStatus('synced');
+      if(Sync.dirty){ Sync.busy=false; return syncResolveConflict(r.data); }   // local + server both changed → merge
+      syncApply(r.data.data); Sync.baseVersion=r.data.version; Sync.baseDoc=_clone(r.data.data||{}); Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSaveBase(); syncSetStatus('synced');
     } else if(r.status===401){ syncSetStatus('error','Wrong passcode'); }
     else if(r.status===404){ syncSetStatus('error','Team not found'); }
     else { syncSetStatus('error','Server error '+r.status); }
@@ -3784,29 +3917,63 @@ async function syncPull(){
   finally{ Sync.busy=false; }
 }
 
+// Both this device and the server changed since our last sync. Instead of the old
+// keep-mine / take-theirs prompt (which discarded one side), do a structural
+// 3-way merge so edits to different players/games/settings all survive. Only a
+// genuine same-field clash resolves to the server value, and every device
+// converges on the same result.
 function syncResolveConflict(serverPayload){
-  syncSetStatus('conflict');
-  var ago = serverPayload && serverPayload.updatedAt ? timeAgo(Date.parse(serverPayload.updatedAt)) : 'recently';
-  var keepMine = (typeof confirm!=='function') ? false :
-    confirm('Another coach updated this team '+ago+'.\n\nOK = Keep MINE (overwrite the team with this device).\nCancel = Take THEIRS (replace this device with the team’s latest).');
-  if(keepMine){
-    Sync.baseVersion = serverPayload.version;   // rebase onto latest, then force our data up
-    Sync.dirty=true; return syncPush();
-  } else {
-    syncApply(serverPayload.data); Sync.baseVersion=serverPayload.version; Sync.dirty=false; Sync.lastSyncAt=Date.now();
-    syncSaveConfig(); syncSetStatus('synced'); toast('Took the team’s latest');
+  var theirs=(serverPayload && serverPayload.data) || {};
+  var base=Sync.baseDoc;
+  if(!base){
+    // No ancestor snapshot (legacy connection made before this feature): fall back
+    // to a union merge that adds anything missing rather than clobbering local edits.
+    syncMergeIn(theirs);
+    Sync.baseVersion=serverPayload.version; Sync.baseDoc=_clone(theirs); Sync.dirty=true;
+    syncSaveConfig(); syncSaveBase(); syncSetStatus('syncing'); toast('Merged another coach’s changes');
+    return syncPush();
   }
+  var merged=mergeTeamDocs(base, syncData(), theirs);
+  syncApply(merged);
+  Sync.baseVersion=serverPayload.version;   // rebase onto the server version we merged against
+  Sync.baseDoc=_clone(theirs);
+  Sync.dirty=true; syncSaveConfig(); syncSaveBase();
+  syncSetStatus('syncing'); toast('Merged another coach’s changes');
+  return syncPush();                         // push the merged result up (re-merges again if it races)
 }
 
-function syncStartPoll(){
-  syncStopPoll();
-  Sync._pollT=setInterval(function(){
-    if(!Sync.connected) return;
-    if(!syncOnline()){ syncSetStatus('offline'); return; }
-    if(Sync.dirty && !Sync.readOnly) syncPush(); else syncPull();
-  }, 20000);
+// Adaptive polling: check often right after any local or remote activity, and when
+// the team has more than one member (so concurrent edits show up in a few seconds),
+// then back off to a slow idle cadence to save battery and requests.
+function syncPollDelay(){
+  var memberCount = Array.isArray(Sync.members) ? Sync.members.length : 0;
+  var multi = memberCount>1 || Sync.mode==='passcode';   // passcode teams are inherently shared
+  var recent = Sync.lastChangeAt && (Date.now()-Sync.lastChangeAt < 60000);
+  if(Sync.dirty || recent) return multi ? 6000 : 10000;   // active editing window
+  return multi ? 12000 : 30000;                            // idle
 }
-function syncStopPoll(){ if(Sync._pollT){ clearInterval(Sync._pollT); Sync._pollT=null; } }
+function syncPollTick(){
+  Sync._pollT=null;
+  if(!Sync.connected) return;
+  if(!syncOnline()){ syncSetStatus('offline'); syncSchedulePoll(); return; }
+  var done=(Sync.dirty && !Sync.readOnly) ? syncPush() : syncPull();
+  Promise.resolve(done).catch(function(){}).then(syncSchedulePoll);
+}
+function syncSchedulePoll(){
+  if(!Sync.connected) return;
+  if(Sync._pollT) clearTimeout(Sync._pollT);
+  Sync._pollT=setTimeout(syncPollTick, syncPollDelay());
+}
+function syncStartPoll(){ syncStopPoll(); syncSchedulePoll(); }
+function syncStopPoll(){ if(Sync._pollT){ clearTimeout(Sync._pollT); Sync._pollT=null; } }
+// Pull immediately when the user returns to the app or the network comes back, so
+// they see other coaches' changes without waiting for the next poll.
+function syncPullNow(){
+  if(!Sync.connected || Sync.busy) return;
+  if(!syncOnline()){ syncSetStatus('offline'); return; }
+  if(Sync.dirty && !Sync.readOnly) syncPush(); else syncPull();
+  syncSchedulePoll();
+}
 
 // After sign-in, open the user's last-used / default team automatically so being
 // signed in also means being connected. A returning device (we have its saved team)
@@ -3845,8 +4012,11 @@ function initSync(){
   var ib=document.getElementById('syncInviteBtn'); if(ib) ib.onclick=accInvite;
   var lv=document.getElementById('syncLeaveBtn'); if(lv) lv.onclick=accLeaveTeam;
   var dt=document.getElementById('syncDeleteTeamBtn'); if(dt) dt.onclick=accDeleteTeam;
-  window.addEventListener('online', function(){ if(Sync.connected){ if(Sync.dirty && !Sync.readOnly) syncPush(); else syncPull(); } });
+  window.addEventListener('online', function(){ if(Sync.connected) syncPullNow(); });
   window.addEventListener('offline', function(){ if(Sync.connected) syncSetStatus('offline'); });
+  // See other coaches' edits the moment you return to the app.
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) syncPullNow(); });
+  window.addEventListener('focus', function(){ syncPullNow(); });
   // Passcode teams reconnect immediately (no auth needed). Account teams wait for the
   // sign-in check below, then auto-reopen so "signed in" also means "connected".
   var preferredAccountTeam = (Sync.mode==='account' && Sync.teamId) ? Sync.teamId : null;
@@ -3957,6 +4127,7 @@ window.__LM__ = {
   parseImportText:parseImportText, currentGame:currentGame, save:save,
   findPlayerByName:findPlayerByName, findPlayerMatch:findPlayerMatch, reconcilePlayers:reconcilePlayers, importSharedRoster:importSharedRoster, remapGameIds:remapGameIds,
   Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase, syncSaveConfig:syncSaveConfig, syncLoadConfig:syncLoadConfig,
+  merge3:merge3, mergeById:mergeById, mergeTeamDocs:mergeTeamDocs,
   accCheckAuth:accCheckAuth, accLoadTeams:accLoadTeams, accCreateTeam:accCreateTeam, accOpenTeam:accOpenTeam, accInvite:accInvite
 };
 </script>
