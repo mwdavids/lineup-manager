@@ -205,9 +205,12 @@ server. Cloud sync just adds an online copy that the app pushes to and pulls fro
   be bypassed from a hacked client. Only the owner can hand out editor invites, change roles,
   remove members, or delete the team; any member can generate a view-only parent link or leave.
 - The frontend is served by **Azure Static Web Apps (Free)** with the Functions wired in as its
-  managed API. Concurrency uses a version number + ETag: if two coaches edit at once, the
-  second save gets a **conflict prompt** ("keep mine / take theirs") instead of silently losing
-  data.
+  managed API. Concurrency uses a version number + ETag. If two coaches edit at once, the app
+  does an automatic **three-way merge** instead of prompting or overwriting: it keeps the
+  last-synced copy as a common ancestor and merges each side's changes. Edits to *different*
+  players, games, or settings all survive; a modification always beats a deletion; and a genuine
+  same-field clash resolves to the server's value so every device converges on the same result.
+  The old "keep mine / take theirs" prompt is gone.
 - The same API also backs **short `#s=` game-share links**: `POST /api/share` stores an
   encoded game payload in a separate `shares` blob container keyed by a random code (no
   passcode — access is by the unguessable code only), and `GET /api/share?code=…` returns it.
@@ -219,8 +222,11 @@ server. Cloud sync just adds an online copy that the app pushes to and pulls fro
   `/api/members`) are **rate-limited per IP**, and `/api/accept` also counts failed guesses, so
   invite/share codes can't be brute-forced — the same best-effort limiter that has always
   guarded the legacy passcode path.
-- The app **auto-pushes** your changes (debounced) and **auto-pulls** on open and every ~20s
-  while online. Offline changes are **queued and flushed on reconnect**.
+- The app **auto-pushes** your changes (debounced) and **auto-pulls** on open, whenever you
+  switch back to the tab, and on an **adaptive poll** — roughly every 6 seconds during active
+  editing on a shared team, backing off to ~30 seconds when idle — so another coach's changes
+  show up in seconds rather than up to ~20. Offline changes are **queued durably and flushed
+  (and merged) on reconnect**.
 
 ### Deploy it (on your personal Azure subscription)
 
@@ -300,7 +306,7 @@ Use it from **Game Setup → Team sync (cloud)**:
    on the team, switch a member between **Coach** and **Parent**, or **Remove** them (access is
    revoked immediately). Non-owners get a **🚪 Leave team** button; the owner gets **🗑️ Delete
    team**, which removes the shared copy for everyone (each device keeps its own local data).
-5. The status pill still shows **Synced / Syncing / Offline / Conflict**, and everything remains
+5. The status pill still shows **Synced / Syncing / Offline**, and everything remains
    **offline-first** — you only need to be online to sign in or switch teams; the cached team
    keeps working with no signal on the sideline.
 
@@ -321,7 +327,7 @@ team passcode"** in the Team sync panel.
    enter the same passcode to join (wrong passcode is rejected). On connect, the app merges the
    server's data with your local roster/games (asking before replacing your roster), reusing
    the same name-based merge as Share/Import.
-4. The status pill shows **Synced / Syncing / Offline / Conflict**. Share the team ID + passcode
+4. The status pill shows **Synced / Syncing / Offline**. Share the team ID + passcode
    with your other devices and the other coach; connect each one the same way.
 
 If you host the plain app on GitHub Pages but deployed the backend to Azure, use the advanced
