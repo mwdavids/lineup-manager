@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -20,6 +20,9 @@
     --safe-b: env(safe-area-inset-bottom, 0px);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  /* Allow pinch-to-zoom (viewport no longer locks scale) while suppressing the
+     accidental double-tap-to-zoom on tappable controls during live use. */
+  button, input, select, textarea, label, .info, .chip, .seg, .tabbar{touch-action:manipulation;}
   html,body{margin:0;padding:0;height:100%;}
   body{
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -3333,6 +3336,7 @@ function syncLoadConfig(){
     Sync.mode=c.mode||'passcode';
     Sync.teamId=c.teamId||null; Sync.teamName=c.teamName||''; Sync.passcode=c.passcode||null;
     Sync.endpoint=c.endpoint||''; Sync.baseVersion=c.baseVersion||0;
+    Sync.dirty = !!c.dirty;   // durable outbox flag: unsynced local edits survive a relaunch
     Sync.connected = !!(c.teamId && (Sync.mode==='account' || c.passcode));
   }catch(e){}
 }
@@ -3341,7 +3345,8 @@ function syncSaveConfig(){
     if(!Sync.connected){ localStorage.removeItem(LS_SYNC); return; }
     localStorage.setItem(LS_SYNC, JSON.stringify({
       mode:Sync.mode, teamId:Sync.teamId, teamName:Sync.teamName,
-      passcode:(Sync.mode==='account'?null:Sync.passcode), endpoint:Sync.endpoint, baseVersion:Sync.baseVersion
+      passcode:(Sync.mode==='account'?null:Sync.passcode), endpoint:Sync.endpoint, baseVersion:Sync.baseVersion,
+      dirty:!!Sync.dirty
     }));
   }catch(e){}
 }
@@ -3405,7 +3410,7 @@ function renderSyncUI(){
   accRenderUI();
   var line=document.getElementById('syncInfoLine');
   if(line && Sync.connected){
-    var extra = Sync.status==='offline' ? ' · offline — will sync when back online'
+    var extra = Sync.status==='offline' ? (Sync.dirty ? ' · offline — unsynced changes will sync when back online' : ' · offline — will sync when back online')
       : Sync.status==='conflict' ? ' · conflict — choose keep/take on next change'
       : Sync.status==='error' && Sync.lastError ? (' · '+Sync.lastError)
       : Sync.dirty ? ' · unsynced changes' : (Sync.lastSyncAt?(' · synced '+timeAgo(Sync.lastSyncAt)):'');
@@ -3576,9 +3581,23 @@ async function accOpenTeam(teamId, teamName, opts){
   Sync.members = Array.isArray(r.data.members) ? r.data.members : null;
   Sync.ownerId = r.data.ownerId || null;
   if(opts.silent){
-    // Returning device auto-reconnect: take the team's latest data, no merge prompt.
+    // Returning device auto-reconnect. If this device has unsynced offline edits
+    // (a durable dirty flag that survived the relaunch), don't clobber them with
+    // the server copy: flush them when we're strictly ahead, or resolve a real
+    // conflict if the server also moved on.
+    var serverVer = r.data.version||1;
+    if(Sync.dirty){
+      if(serverVer === Sync.baseVersion){
+        Sync.baseVersion=serverVer; syncSaveConfig(); syncStartPoll();
+        await syncPush();                 // replay the outbox
+        return true;
+      }
+      syncStartPoll();
+      syncResolveConflict(r.data);         // both sides changed → keep-mine / take-theirs
+      return true;
+    }
     if(r.data.data) syncApply(r.data.data);
-    Sync.baseVersion=r.data.version||1; Sync.dirty=false; Sync.lastSyncAt=Date.now();
+    Sync.baseVersion=serverVer; Sync.dirty=false; Sync.lastSyncAt=Date.now();
     syncSaveConfig(); syncSetStatus('synced'); syncStartPoll();
     return true;
   }
@@ -3717,6 +3736,7 @@ function syncHeaders(){ return Sync.mode==='account' ? {} : {'x-team-pass': Sync
 
 function syncOnLocalChange(){
   Sync.dirty=true;
+  syncSaveConfig();  // persist the outbox flag immediately so a crash before flush can't lose it
   if(Sync.status==='synced') syncSetStatus('synced'); // refresh "unsynced changes"
   renderSyncUI();
   if(Sync._pushT) clearTimeout(Sync._pushT);
@@ -3936,7 +3956,7 @@ window.__LM__ = {
   loadSharedCode:loadSharedCode, buildPrintView:buildPrintView,
   parseImportText:parseImportText, currentGame:currentGame, save:save,
   findPlayerByName:findPlayerByName, findPlayerMatch:findPlayerMatch, reconcilePlayers:reconcilePlayers, importSharedRoster:importSharedRoster, remapGameIds:remapGameIds,
-  Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase,
+  Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase, syncSaveConfig:syncSaveConfig, syncLoadConfig:syncLoadConfig,
   accCheckAuth:accCheckAuth, accLoadTeams:accLoadTeams, accCreateTeam:accCreateTeam, accOpenTeam:accOpenTeam, accInvite:accInvite
 };
 </script>
