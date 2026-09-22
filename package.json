@@ -4,9 +4,10 @@
   "description": "Offline-first lineup planner for U13 11v11 (4-3-3). Root holds dev/test tooling; the app itself is the single-file index.html.",
   "private": true,
   "scripts": {
-    "test": "node --test test/planner.test.js test/store.test.js",
+    "test": "node --test test/planner.test.js test/store.test.js test/merge.test.js",
     "test:planner": "node --test test/planner.test.js",
-    "test:store": "node --test test/store.test.js"
+    "test:store": "node --test test/store.test.js",
+    "test:merge": "node --test test/merge.test.js"
   },
   "engines": { "node": ">=18" },
   "devDependencies": {
