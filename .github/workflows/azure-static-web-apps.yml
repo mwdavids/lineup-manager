@@ -33,7 +33,10 @@ jobs:
           app_location: "/"
           # Azure Functions API.
           api_location: "api"
-          # No build step — the site is served as-is.
+          # No build step — the site is served as-is. The root package.json holds
+          # only dev/test tooling, so tell Oryx not to look for an app build script
+          # (skipping the app build also excludes node_modules from the upload).
+          skip_app_build: true
           output_location: ""
 
   close_pull_request:
