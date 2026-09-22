@@ -1,7 +1,5 @@
-# Node / test artifacts (root only — api/package.json IS committed)
+# Node / test artifacts (root package.json now holds dev/test tooling and IS committed)
 /node_modules/
-/package.json
-/package-lock.json
 /synctest.js
 
 # azd
