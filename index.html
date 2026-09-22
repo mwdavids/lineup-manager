@@ -246,6 +246,55 @@
   .arrivestrip{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;justify-content:center}
   .arrivestrip .ac{font-size:12px;font-weight:700;border:1.5px solid var(--accent);color:var(--accent-d);border-radius:8px;padding:4px 8px;background:#f2fbf6}
   .pathcap{margin-top:8px;font-size:12px;font-weight:600;color:var(--ink);background:var(--chip);border-radius:8px;padding:8px}
+
+  /* ---- #23 Keyboard focus visibility (global, applies to all focusable UI) ---- */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn:focus-visible,.seg button:focus-visible,.chip:focus-visible,.tok:focus-visible,
+  input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  /* On the dark bottom nav an accent outline is low-contrast; use a light inset ring. */
+  .tabbar button:focus-visible{outline:2px solid #fff;outline-offset:-4px}
+
+  /* ---- #22 Desktop / tablet layout: use the extra width on the form-heavy Setup tab ---- */
+  @media (min-width:900px){
+    #tab-setup{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+    #tab-setup>.panel{margin-bottom:0}
+    /* The availability grid is wide; let it span both columns. */
+    #tab-setup>.panel:has(.availgrid){grid-column:1 / -1}
+  }
+
+  /* ---- #20 Dark mode (respects the OS colour scheme) ---- */
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme:dark;
+      --bg:#0a1f18; --bg2:#0e3126; --panel:#16211d; --ink:#e7f0eb; --muted:#9db3a8;
+      --line:#2b3a33; --accent:#1db067; --accent-d:#39c081; --warn:#e0912f; --bad:#e0574a;
+      --chip:#1d2a24; --sel:#4a3d18; --sel-b:#c99b2e;
+    }
+    /* Hardcoded light surfaces -> dark equivalents */
+    input,select,textarea{background:#101a15;border-color:var(--line)}
+    .seg button{background:#101a15;color:var(--ink)}
+    .chip{background:#101a15}
+    .sheet{background:var(--panel);color:var(--ink)}
+    .availcell.off{background:#1a2621}
+    .bar{background:#25332c}
+    table.plan td .cell.pinned{background:#3a3016;outline-color:#c99b2e}
+    .pc-chip.on{background:#12352a;color:var(--accent-d)}
+    .pc-chip.bench{background:#1b2621;border-color:#3a4a41;color:var(--muted)}
+    .subcard,.repairbar{background:#2a2412}
+    .arrivestrip .ac{background:#12352a}
+    /* Pitch stays green in both modes, so keep tokens light — just fix var-driven text. */
+    .tok .nm{color:#14231c}
+    .tok .foot{color:#5b6b63}
+  }
+
+  /* ---- #24 Reduced motion: neutralise the pulsing alerts and transitions ---- */
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{
+      animation-duration:.001ms!important;animation-iteration-count:1!important;
+      transition-duration:.001ms!important;scroll-behavior:auto!important;
+    }
+  }
+
   @media print{
     @page{ size: letter landscape; margin: 0.5in; }
     header,.tabbar,.noprint{display:none!important}
@@ -3314,7 +3363,9 @@ function switchTab(name){
     document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
   });
   Array.prototype.forEach.call(document.querySelectorAll('.tabbar button'), function(b){
-    b.classList.toggle('active', b.getAttribute('data-tab')===name);
+    var on = b.getAttribute('data-tab')===name;
+    b.classList.toggle('active', on);
+    if(on) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
   });
   if(name==='roster') renderRoster();
   if(name==='setup'){ loadGameIntoSetup(); }
