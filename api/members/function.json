@@ -5,8 +5,8 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "methods": ["get", "put", "delete"],
-      "route": "team"
+      "methods": ["patch", "delete"],
+      "route": "members"
     },
     {
       "type": "http",

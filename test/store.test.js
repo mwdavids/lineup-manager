@@ -94,3 +94,69 @@ test('legacy passcode teams are not treated as account teams', () => {
   assert.equal(store.isAccountTeam(legacy), false);
   assert.equal(store.roleOf(legacy, 'anyone'), null);
 });
+
+test('normalizeRole: only editor/viewer are assignable', () => {
+  assert.equal(store.normalizeRole('editor'), 'editor');
+  assert.equal(store.normalizeRole('Viewer'), 'viewer');
+  assert.equal(store.normalizeRole('  EDITOR '), 'editor');
+  assert.equal(store.normalizeRole('owner'), null, 'owner is not assignable');
+  assert.equal(store.normalizeRole('member'), null, 'legacy member is not assignable');
+  assert.equal(store.normalizeRole('admin'), null);
+  assert.equal(store.normalizeRole(null), null);
+});
+
+function acctTeam() {
+  return {
+    version: 3,
+    ownerId: 'owner-1',
+    displayName: 'Thunder',
+    data: { x: 1 },
+    members: [
+      { uid: 'owner-1', role: 'owner', name: 'Coach' },
+      { uid: 'ed-1', role: 'editor', name: 'Ed' },
+      { uid: 'view-1', role: 'viewer', name: 'Val' },
+    ],
+  };
+}
+
+test('applySetRole: changes a member role, bumps version, never mutates input', () => {
+  const team = acctTeam();
+  const snapshot = JSON.stringify(team);
+  const res = store.applySetRole(team, 'view-1', 'editor');
+  assert.equal(res.ok, true);
+  assert.equal(res.doc.version, 4, 'version bumped');
+  assert.equal(res.doc.members.find((m) => m.uid === 'view-1').role, 'editor');
+  assert.deepEqual(res.doc.data, { x: 1 }, 'data preserved');
+  assert.equal(JSON.stringify(team), snapshot, 'input unchanged');
+});
+
+test('applySetRole: guards owner, unknown member, bad role, and no-ops', () => {
+  const team = acctTeam();
+  assert.equal(store.applySetRole(team, 'owner-1', 'editor').error, 'cannot_change_owner');
+  assert.equal(store.applySetRole(team, 'ghost', 'editor').error, 'not_a_member');
+  assert.equal(store.applySetRole(team, 'ed-1', 'owner').error, 'invalid_role');
+  const noop = store.applySetRole(team, 'ed-1', 'editor');
+  assert.equal(noop.ok, true);
+  assert.equal(noop.doc, null, 'same role → no-op, no write');
+  assert.equal(store.applySetRole({ passHash: 'x' }, 'a', 'editor').error, 'not_account_team');
+});
+
+test('applyRemoveMember: drops a member, bumps version, protects the owner', () => {
+  const team = acctTeam();
+  const res = store.applyRemoveMember(team, 'ed-1');
+  assert.equal(res.ok, true);
+  assert.equal(res.doc.members.some((m) => m.uid === 'ed-1'), false);
+  assert.equal(res.doc.members.length, 2);
+  assert.equal(res.doc.version, 4);
+  assert.equal(store.applyRemoveMember(team, 'owner-1').error, 'cannot_remove_owner');
+  const gone = store.applyRemoveMember(team, 'never');
+  assert.equal(gone.ok, true);
+  assert.equal(gone.doc, null, 'not present → no-op');
+});
+
+test('shareExpired: only past expiry counts as expired', () => {
+  assert.equal(store.shareExpired({ expiresAt: new Date(Date.now() - 1000).toISOString() }), true);
+  assert.equal(store.shareExpired({ expiresAt: new Date(Date.now() + 60000).toISOString() }), false);
+  assert.equal(store.shareExpired({}), false, 'no expiry → never expires (legacy)');
+  assert.equal(store.shareExpired(null), false);
+});
