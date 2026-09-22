@@ -194,6 +194,18 @@
   .sheet{background:#fff;width:100%;max-width:560px;border-radius:16px 16px 0 0;padding:16px;max-height:85vh;overflow:auto}
   @media (min-width:700px){ .overlay{align-items:center} .sheet{border-radius:16px} }
   .sheet h3{margin:0 0 10px}
+  /* In-app dialog (replaces native confirm/prompt/alert). Own overlay so it can
+     stack above an already-open sheet. */
+  .dlg-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:60;display:none;align-items:center;justify-content:center;padding:16px}
+  .dlg-overlay.show{display:flex}
+  .dlg-card{background:var(--panel);color:var(--ink);width:100%;max-width:420px;border-radius:16px;padding:18px;box-shadow:0 10px 34px rgba(0,0,0,.4);max-height:85vh;overflow:auto}
+  .dlg-card h3{margin:0 0 10px;font-size:17px}
+  .dlg-msg{margin:0 0 8px;font-size:15px;line-height:1.4}
+  .dlg-gap{height:6px;margin:0}
+  .dlg-input{width:100%;margin:4px 0 2px}
+  .dlg-btns{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .dlg-btns .btn{flex:1;min-width:120px}
+  .dlg-card .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .choice{display:flex;align-items:center;gap:10px;padding:10px;border:1.5px solid var(--line);border-radius:10px;margin-bottom:8px;min-height:var(--tap);cursor:pointer}
   .choice:active{background:var(--chip)}
   .poswrap{display:flex;gap:6px;flex-wrap:wrap}
@@ -621,6 +633,7 @@
 </div>
 
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+<div class="dlg-overlay" id="dlgOverlay" role="dialog" aria-modal="true"><div class="dlg-card" id="dlgCard"></div></div>
 <div class="toast" id="toast"></div>
 <div class="alarmbanner" id="alarmBanner">
   <div class="amsg" id="alarmMsg">🔄 Time to make the subs!</div>
@@ -873,6 +886,68 @@ function currentGame(){ for(var i=0;i<state.games.length;i++) if(state.games[i].
 function toast(msg){
   var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
   clearTimeout(toast._t); toast._t=setTimeout(function(){t.classList.remove('show');},1800);
+}
+
+/* ---------- In-app dialogs (replace native confirm/prompt/alert) ---------- */
+// Promise-based dialog rendered in the app's own styled card. `fallback` is what
+// resolves when there is no DOM (headless), mirroring the old
+// `typeof confirm!=='function' ? default` guards.
+function uiDialog(opts){
+  opts=opts||{};
+  return new Promise(function(resolve){
+    var ov=(typeof document!=='undefined') && document.getElementById('dlgOverlay');
+    var card=ov && document.getElementById('dlgCard');
+    if(!ov||!card){ resolve(opts.fallback); return; }
+    card.innerHTML='';
+    if(opts.title) card.appendChild(el('h3',null,opts.title));
+    if(opts.message!=null){
+      String(opts.message).split('\n').forEach(function(line){
+        var p=el('p','dlg-msg', line); if(line==='') p.className='dlg-gap';
+        card.appendChild(p);
+      });
+    }
+    var field=null;
+    if(opts.input){
+      field=el('input'); field.type='text'; field.className='dlg-input';
+      if(opts.input.value!=null) field.value=opts.input.value;
+      if(opts.input.placeholder) field.placeholder=opts.input.placeholder;
+      card.appendChild(field);
+    }
+    var row=el('div','dlg-btns'), primary=null, cleanup;
+    var done=function(v){ cleanup(); resolve(v); };
+    (opts.buttons||[]).forEach(function(b){
+      var btn=el('button','btn'+(b.cls?' '+b.cls:''), b.label);
+      btn.onclick=function(){ done(b.input ? (field?field.value:'') : b.value); };
+      if(b.primary) primary=btn;
+      row.appendChild(btn);
+    });
+    card.appendChild(row);
+    var onKey=function(e){
+      if(e.key==='Escape'){ e.preventDefault(); done(opts.cancelValue); }
+      else if(e.key==='Enter'){ e.preventDefault(); if(primary) primary.click(); }
+    };
+    var onBackdrop=function(e){ if(e.target===ov) done(opts.cancelValue); };
+    cleanup=function(){ document.removeEventListener('keydown',onKey,true); ov.removeEventListener('click',onBackdrop); ov.classList.remove('show'); };
+    document.addEventListener('keydown',onKey,true);
+    ov.addEventListener('click',onBackdrop);
+    ov.classList.add('show');
+    setTimeout(function(){ var f=field||primary; if(f&&f.focus) f.focus(); },0);
+  });
+}
+// Two-button confirm. Resolves true (confirm) / false (cancel). Headless: true.
+function uiConfirm(o){
+  o=o||{};
+  return uiDialog({ title:o.title, message:o.message, fallback:true, cancelValue:false,
+    buttons:[ {label:o.cancelLabel||'Cancel', cls:'sec', value:false},
+              {label:o.confirmLabel||'OK', cls:(o.danger?'bad':''), value:true, primary:true} ] });
+}
+// Text prompt. Resolves the entered string, or null on cancel. Headless: value.
+function uiPrompt(o){
+  o=o||{};
+  return uiDialog({ title:o.title, message:o.message, fallback:(o.value!=null?o.value:null), cancelValue:null,
+    input:{value:o.value, placeholder:o.placeholder},
+    buttons:[ {label:o.cancelLabel||'Cancel', cls:'sec', value:null},
+              {label:o.confirmLabel||'OK', cls:'', input:true, primary:true} ] });
 }
 function pushUndo(){
   var g=currentGame(); if(!g) return;
@@ -1517,8 +1592,8 @@ function openPlayerSheet(id){
   btns.appendChild(saveB);
   if(editing){
     var delB=el('button','btn bad','Remove');
-    delB.onclick=function(){
-      if(!confirm('Remove '+pl.name+'?')) return;
+    delB.onclick=async function(){
+      if(!(await uiConfirm({title:'Remove player', message:'Remove '+pl.name+'?', confirmLabel:'Remove', danger:true}))) return;
       state.players=state.players.filter(function(x){return x.id!==pl.id;});
       state.games.forEach(function(g){ if(g.availability) delete g.availability[pl.id]; });
       save(); closeSheet(); renderRoster(); renderAvailability(); toast('Removed');
@@ -1577,8 +1652,8 @@ function renderSavedGames(){
     row.appendChild(open);
     var dup=el('button','btn sm sec','⧉'); dup.title='Duplicate'; dup.onclick=function(){ duplicateGame(g.id); };
     row.appendChild(dup);
-    var del=el('button','btn sm bad','✕'); del.onclick=function(){
-      if(!confirm('Delete game "'+(g.name||'')+'"?')) return;
+    var del=el('button','btn sm bad','✕'); del.onclick=async function(){
+      if(!(await uiConfirm({title:'Delete game', message:'Delete game "'+(g.name||'')+'"?', confirmLabel:'Delete', danger:true}))) return;
       state.games=state.games.filter(function(x){return x.id!==g.id;});
       if(state.currentGameId===g.id) state.currentGameId = state.games.length? state.games[state.games.length-1].id : null;
       save(); loadGameIntoSetup(); renderAll();
@@ -2506,7 +2581,7 @@ function editClock(){
   var within=Math.max(0, Math.min(periodLen, periodLen-timer.remaining));
   var half=(g.periods===2);
   var label=half?'half':'period';
-  var input=prompt('Set match time (mm:ss). This '+label+' runs '+fmt(base)+'–'+fmt(base+periodLen)+'.', fmt(base+within));
+  uiPrompt({title:'Set match time', message:'Enter time as mm:ss. This '+label+' runs '+fmt(base)+'–'+fmt(base+periodLen)+'.', value:fmt(base+within), placeholder:'mm:ss'}).then(function(input){
   if(input===null) return;
   input=(''+input).trim();
   var secs=null;
@@ -2519,6 +2594,7 @@ function editClock(){
   if(secs<base || secs>base+periodLen){ toast('That time is outside this '+label+' ('+fmt(base)+'–'+fmt(base+periodLen)+')'); return; }
   applyElapsed(secs-base);
   toast('⏱️ Clock set to '+fmt(secs));
+  });
 }
 function initClock(){
   var g=currentGame();
@@ -2715,8 +2791,8 @@ function openMarkOut(){
     var c=el('div','choice');
     var av=el('div','avatar',initials(pl.name)); paintAvatar(av,pl.name); av.style.width='30px';av.style.height='30px';av.style.fontSize='12px'; c.appendChild(av);
     c.appendChild(el('div','grow', pl.name));
-    c.onclick=function(){
-      if(!confirm('Mark '+pl.name+' OUT and re-plan the rest of the game?')) return;
+    c.onclick=async function(){
+      if(!(await uiConfirm({title:'Mark player OUT', message:'Mark '+pl.name+' OUT and re-plan the rest of the game?', confirmLabel:'Mark OUT', danger:true}))) return;
       pushUndo();
       markPlayerOut(pl.id, gi);
       closeSheet();
@@ -3069,13 +3145,44 @@ function routeImport(obj, opts){
   toast('Unrecognized data format'); return false;
 }
 
+// Interactive wrapper: confirm with the user via the in-app dialog, then run the
+// (synchronous, test-exported) executor with the choice already made.
+async function importInteractive(obj){
+  var t=payloadType(obj);
+  if(t==='game'){
+    var g=obj.game||{};
+    var summary=(g.name||'Untitled game')+' — '+g.periods+'×'+g.minutes+"'"+(g.plan?' · planned':'');
+    if(!(await uiConfirm({title:'Load shared game', message:'Load “'+summary+'”?\nThis adds it to your saved games — nothing is overwritten.', confirmLabel:'Load game'}))) return false;
+    return importSharedGame(obj, {silent:true});
+  }
+  if(t==='roster'){
+    var n=((obj.players)||[]).length;
+    if(!(await uiConfirm({title:'Sync roster', message:'Sync roster from this data ('+n+' players)?\nUpdates matching players and adds new ones. Your saved games are kept.', confirmLabel:'Sync roster'}))) return false;
+    return importSharedRoster(obj, {silent:true});
+  }
+  if(t==='full'){
+    var incoming = obj.type==='full'? obj.state : obj;
+    var np=(incoming && incoming.players ? incoming.players.length : 0);
+    var choice=await uiDialog({
+      title:'Import backup',
+      message:'This backup has '+np+' players. Replace your current roster, or keep it and merge in new players? Games are imported either way.',
+      cancelValue:'cancel', fallback:'replace',
+      buttons:[
+        {label:'Cancel', cls:'sec', value:'cancel'},
+        {label:'Keep & merge', cls:'ghost', value:'merge'},
+        {label:'Replace roster', cls:'bad', value:'replace', primary:true}
+      ]
+    });
+    if(choice==='cancel') return false;
+    return importFullState(obj, {silent:true, replaceRoster: choice==='replace'});
+  }
+  toast('Unrecognized data format'); return false;
+}
+
 function importSharedGame(payload, opts){
   opts=opts||{};
   var g=payload.game;
   if(!g || !g.availability){ toast('Invalid game link'); return false; }
-  var summary=(g.name||'Untitled game')+' — '+g.periods+'×'+g.minutes+"'"+(g.plan?' · planned':'');
-  var ok = (opts.silent || typeof confirm!=='function') ? true : confirm('Load shared game “'+summary+'”?\nThis adds it to your saved games (nothing is overwritten).');
-  if(!ok) return false;
   var idMap=reconcilePlayers(payload.players); // attach by name, add missing
   var copy=remapGameIds(_clone(g), idMap);
   copy.id=uid('g');
@@ -3091,8 +3198,6 @@ function importSharedRoster(payload, opts){
   opts=opts||{};
   var players=payload.players||[];
   if(!players.length){ toast('No roster in that data'); return false; }
-  var ok = (opts.silent || typeof confirm!=='function') ? true : confirm('Sync roster from this link ('+players.length+' players)?\nUpdates matching players (foot, positions, goalie preference, skill & minutes) and adds any new players. Your saved games are kept.');
-  if(!ok) return false;
   var added=0, updated=0;
   players.forEach(function(p){
     var match=findPlayerMatch(p);
@@ -3116,7 +3221,7 @@ function importFullState(obj, opts){
   opts=opts||{};
   var incoming = obj.type==='full'? obj.state : ((obj.players&&obj.games)? obj : null);
   if(!incoming || !incoming.players){ toast('Unrecognized backup'); return false; }
-  var replaceRoster = opts.silent ? true : ((typeof confirm==='function') ? confirm('Import backup: replace your roster with the imported one ('+incoming.players.length+' players)?\nOK = replace roster.\nCancel = keep your roster (new players still merged in, games still imported).') : true);
+  var replaceRoster = opts.hasOwnProperty('replaceRoster') ? !!opts.replaceRoster : true;
   if(replaceRoster){ state.players=incoming.players.map(_clone); }
   else { incoming.players.forEach(function(p){ if(!byId(p.id)) state.players.push(_clone(p)); }); }
   var existingIds={}; state.games.forEach(function(g){ existingIds[g.id]=1; });
@@ -3150,7 +3255,7 @@ function openImportSheet(){
     if(sc){ closeSheet(); loadSharedCode(sc[1]); return; }
     var obj=parseImportText(ta.value);
     if(!obj){ toast('Could not read that — check the code/link'); return; }
-    closeSheet(); routeImport(obj);
+    closeSheet(); importInteractive(obj);
   };
   row.appendChild(imp);
   var close=el('button','btn sec','Cancel'); close.onclick=closeSheet; row.appendChild(close);
@@ -3164,7 +3269,7 @@ function handleImportFile(file){
   reader.onload=function(){
     var obj=parseImportText(String(reader.result));
     if(!obj){ toast('That file isn’t a valid backup'); return; }
-    closeSheet(); routeImport(obj);
+    closeSheet(); importInteractive(obj);
   };
   reader.onerror=function(){ toast('Could not read file'); };
   reader.readAsText(file);
@@ -3181,7 +3286,8 @@ function checkHashImport(){
   try{ obj=decodePayload(enc); }catch(e){ obj=null; }
   clearHash();
   if(!obj){ toast('Shared link could not be read'); return false; }
-  return routeImport(obj);
+  importInteractive(obj);
+  return true;
 }
 // Resolve a short #s=<code> link by fetching the stored payload from the API.
 function loadSharedCode(code){
@@ -3189,7 +3295,7 @@ function loadSharedCode(code){
   toast('Loading shared game…');
   fetch(syncApiBase()+'/share?code='+encodeURIComponent(code))
     .then(function(r){ if(r.status===404) return Promise.reject(new Error('not_found')); return r.ok ? r.json() : Promise.reject(new Error('http '+r.status)); })
-    .then(function(j){ var obj=j&&j.payload; if(!obj) throw new Error('empty'); routeImport(obj); })
+    .then(function(j){ var obj=j&&j.payload; if(!obj) throw new Error('empty'); importInteractive(obj); })
     .catch(function(e){ toast((e&&e.message==='not_found') ? 'Shared link expired or not found' : 'Could not load shared link — check your connection'); });
 }
 function clearHash(){
@@ -3270,12 +3376,23 @@ function wire(){
     };
   });
 
-  document.getElementById('regenBtn').onclick=function(){ var g=currentGame(); if(!g){toast('No game');return;} if(g.locked){toast('Unlock first');return;}
+  document.getElementById('regenBtn').onclick=async function(){ var g=currentGame(); if(!g){toast('No game');return;} if(g.locked){toast('Unlock first');return;}
     var np=countPins(g), ne=countEdits(g);
     if(np+ne>0){
-      var keep=confirm('You have '+np+' pinned and '+ne+' hand-edited cell'+((np+ne)>1?'s':'')+'.\n\nOK = rebuild but KEEP them.\nCancel = clear everything and fully rebuild.');
+      var total=np+ne, cellWord='cell'+(total>1?'s':'');
+      var choice=await uiDialog({
+        title:'Rebuild plan',
+        message:'You have '+np+' pinned and '+ne+' hand-edited '+cellWord+'. Keep them, or clear everything and fully rebuild?',
+        cancelValue:'cancel', fallback:'cancel',
+        buttons:[
+          {label:'Cancel', cls:'sec', value:'cancel'},
+          {label:'Clear & rebuild', cls:'bad', value:'clear'},
+          {label:'Keep '+total+' '+cellWord, cls:'', value:'keep', primary:true}
+        ]
+      });
+      if(choice==='cancel') return;
       pushUndo();
-      if(keep){ g.plan=generatePlan(g,{holdSlots:planHolds(g)}); pruneEditsAndPins(g); toast('Rebuilt · kept '+(np+ne)+' cell'+((np+ne)>1?'s':'')); }
+      if(choice==='keep'){ g.plan=generatePlan(g,{holdSlots:planHolds(g)}); pruneEditsAndPins(g); toast('Rebuilt · kept '+total+' '+cellWord); }
       else { clearPins(g); clearEdits(g); g.plan=generatePlan(g); toast('Regenerated'); }
     } else { pushUndo(); g.plan=generatePlan(g); toast('Regenerated'); }
     save(); renderPlan(); };
@@ -3612,7 +3729,7 @@ async function syncConnect(teamId, passcode, endpoint){
   Sync.teamId=teamId; Sync.passcode=passcode; Sync.connected=true; Sync.readOnly=false;
   if(r.data.data){
     // Team already has data — merge it into local, then push the union up.
-    var doMerge = (typeof confirm!=='function') ? true : confirm('This team already has saved data.\n\nOK = merge it with what’s on this device (recommended).\nCancel = keep only this device’s data and overwrite the team.');
+    var doMerge = await uiConfirm({title:'Team has saved data', message:'This team already has saved data.\n\nMerge it with what’s on this device (recommended), or overwrite the team with only this device’s data?', confirmLabel:'Merge', cancelLabel:'Overwrite team'});
     if(doMerge) syncMergeIn(r.data.data);
     Sync.baseVersion=r.data.version;
   } else {
@@ -3731,7 +3848,7 @@ async function accOpenTeam(teamId, teamName, opts){
     return true;
   }
   if(r.data.data){
-    var doMerge = (typeof confirm!=='function') ? true : confirm('This team already has saved data.\n\nOK = merge it with what’s on this device (recommended).\nCancel = keep only this device’s data and overwrite the team.');
+    var doMerge = await uiConfirm({title:'Team has saved data', message:'This team already has saved data.\n\nMerge it with what’s on this device (recommended), or overwrite the team with only this device’s data?', confirmLabel:'Merge', cancelLabel:'Overwrite team'});
     if(doMerge) syncMergeIn(r.data.data);
     Sync.baseVersion=r.data.version;
   } else {
@@ -3756,7 +3873,7 @@ async function accInvite(){
   var link=location.origin+'/?join='+encodeURIComponent(r.data.code);
   var kind=(r.data.role==='viewer')?'view-only parent':'coach';
   try{ await navigator.clipboard.writeText(link); toast('Invite link copied ('+kind+') — send it along'); }
-  catch(e){ if(typeof prompt==='function') prompt('Copy this '+kind+' invite link and send it:', link); else toast('Invite link: '+link); }
+  catch(e){ await uiPrompt({title:'Invite link', message:'Copy this '+kind+' invite link and send it:', value:link, confirmLabel:'Done'}); }
 }
 
 /* ---------- Owner: member management ---------- */
@@ -3806,7 +3923,7 @@ async function accSetRole(uid, role){
 }
 async function accRemoveMember(uid, label){
   if(Sync.mode!=='account' || !Sync.teamId) return;
-  if(typeof confirm==='function' && !confirm('Remove '+(label||'this member')+' from the team? They lose access immediately.')) return;
+  if(!(await uiConfirm({title:'Remove member', message:'Remove '+(label||'this member')+' from the team? They lose access immediately.', confirmLabel:'Remove', danger:true}))) return;
   var r;
   try{ r=await accFetch('/members',{method:'DELETE',body:{teamId:Sync.teamId, uid:uid}}); }
   catch(e){ toast('Could not reach the server'); return; }
@@ -3818,7 +3935,7 @@ async function accRemoveMember(uid, label){
 async function accLeaveTeam(){
   if(Sync.mode!=='account' || !Sync.teamId) return;
   if(!Sync.account.user || !Sync.account.user.uid){ toast('Sign in first'); return; }
-  if(typeof confirm==='function' && !confirm('Leave this team? It stays on your other devices only if you rejoin. Your local copy is kept.')) return;
+  if(!(await uiConfirm({title:'Leave team', message:'Leave this team? It stays on your other devices only if you rejoin. Your local copy is kept.', confirmLabel:'Leave', danger:true}))) return;
   var r;
   try{ r=await accFetch('/members',{method:'DELETE',body:{teamId:Sync.teamId, uid:Sync.account.user.uid}}); }
   catch(e){ toast('Could not reach the server'); return; }
@@ -3829,7 +3946,7 @@ async function accLeaveTeam(){
 }
 async function accDeleteTeam(){
   if(Sync.mode!=='account' || !Sync.teamId || Sync.role!=='owner'){ toast('Only the owner can delete the team'); return; }
-  if(typeof confirm==='function' && !confirm('Permanently delete team “'+(Sync.teamName||Sync.teamId)+'” for everyone? This cannot be undone. Your local copy is kept.')) return;
+  if(!(await uiConfirm({title:'Delete team', message:'Permanently delete team “'+(Sync.teamName||Sync.teamId)+'” for everyone? This cannot be undone. Your local copy is kept.', confirmLabel:'Delete team', danger:true}))) return;
   var r;
   try{ r=await accFetch('/team?teamId='+encodeURIComponent(Sync.teamId),{method:'DELETE'}); }
   catch(e){ toast('Could not reach the server'); return; }
@@ -3846,7 +3963,7 @@ async function accAcceptFromUrl(){
   // Clean the URL either way so a refresh doesn't re-trigger.
   try{ history.replaceState(null,'',location.pathname); }catch(e){}
   if(!Sync.account.loggedIn){
-    if(typeof confirm!=='function' || confirm('You were invited to a team. Sign in with Microsoft to join?')){
+    if(await uiConfirm({title:'Team invite', message:'You were invited to a team. Sign in with Microsoft to join?', confirmLabel:'Sign in'})){
       // Preserve the code across login so it can be redeemed afterward.
       try{ sessionStorage.setItem('lm.pendingJoin', code); }catch(e){}
       accSignIn();
