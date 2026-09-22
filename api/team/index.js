@@ -69,8 +69,38 @@ module.exports = async function (context, req) {
     if (store.isAccountTeam(team)) {
       out.name = team.displayName || teamId;
       out.role = store.roleOf(team, identity.uid);
+      // The owner gets the roster of members so they can manage access.
+      if (out.role === 'owner') {
+        out.ownerId = team.ownerId;
+        out.members = (team.members || []).map((m) => ({
+          uid: m.uid,
+          role: m.uid === team.ownerId ? 'owner' : (m.role || 'member'),
+          name: m.name || '',
+          addedAt: m.addedAt || null,
+        }));
+      }
     }
     return json(context, 200, out);
+  }
+
+  // ---- DELETE: owner permanently deletes the team ----
+  if (method === 'DELETE') {
+    if (!store.isAccountTeam(team)) return json(context, 400, { error: 'not_account_team', message: 'Legacy passcode teams cannot be deleted here.' });
+    if (store.roleOf(team, identity.uid) !== 'owner') {
+      return json(context, 403, { error: 'owner_only', message: 'Only the team owner can delete the team.' });
+    }
+    const memberUids = [team.ownerId].concat((team.members || []).map((m) => m && m.uid)).filter(Boolean);
+    try {
+      await store.deleteTeam(teamId);
+    } catch (e) {
+      context.log.error('team delete failed', e);
+      return json(context, 500, { error: 'server_error' });
+    }
+    // Best-effort: unlink the team from every member's index.
+    for (const uid of Array.from(new Set(memberUids))) {
+      try { await store.removeTeamFromUser(uid, teamId); } catch (e) { context.log.warn('team delete: unlink failed for ' + uid, e); }
+    }
+    return json(context, 200, { deleted: true });
   }
 
   // ---- PUT ----

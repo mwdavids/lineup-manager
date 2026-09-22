@@ -193,9 +193,17 @@ server. Cloud sync just adds an online copy that the app pushes to and pulls fro
   no registration). The signed-in user arrives at the Functions as the `x-ms-client-principal`
   header; account teams carry an `ownerId` + `members[]`, a per-user index lives in a `users`
   container, and invite codes live in an `invites` container. `GET /api/me` lists your teams,
-  `POST /api/teams` creates one, `POST /api/invite` mints a join link, and `POST /api/accept`
-  redeems it. Legacy passcode teams (no `ownerId`) keep working via `/api/join` + the
+  `POST /api/teams` creates one, `POST /api/invite` mints a join link (with a **role** — coach
+  or view-only parent), and `POST /api/accept` redeems it, assigning that role. The owner
+  manages access via `PATCH`/`DELETE /api/members` (change a role, remove a member, or leave)
+  and `DELETE /api/team` (delete the whole team); `GET /api/team` returns the member roster to
+  the owner. Legacy passcode teams (no `ownerId`) keep working via `/api/join` + the
   `x-team-pass` header — the two models coexist.
+- **Roles.** Every account team has an **owner** (its creator). Invited members are either
+  **editors** ("coach" — full read/write) or **viewers** ("parent" — read-only). The server
+  enforces this: a viewer's `PUT /api/team` is rejected with `403 read_only`, so the role can't
+  be bypassed from a hacked client. Only the owner can hand out editor invites, change roles,
+  remove members, or delete the team; any member can generate a view-only parent link or leave.
 - The frontend is served by **Azure Static Web Apps (Free)** with the Functions wired in as its
   managed API. Concurrency uses a version number + ETag: if two coaches edit at once, the
   second save gets a **conflict prompt** ("keep mine / take theirs") instead of silently losing
@@ -203,8 +211,14 @@ server. Cloud sync just adds an online copy that the app pushes to and pulls fro
 - The same API also backs **short `#s=` game-share links**: `POST /api/share` stores an
   encoded game payload in a separate `shares` blob container keyed by a random code (no
   passcode — access is by the unguessable code only), and `GET /api/share?code=…` returns it.
-  This is what lets a shared game travel as a tiny URL instead of a giant one; offline the app
-  falls back to the self-contained long link automatically.
+  Share links **expire automatically** (~30 days), and if you were signed in when you created
+  one you can **revoke it early** (`DELETE /api/share?code=…`). This is what lets a shared game
+  travel as a tiny URL instead of a giant one; offline the app falls back to the self-contained
+  long link automatically.
+- **Abuse hardening.** The low-/no-auth endpoints (`/api/invite`, `/api/accept`, `/api/share`,
+  `/api/members`) are **rate-limited per IP**, and `/api/accept` also counts failed guesses, so
+  invite/share codes can't be brute-forced — the same best-effort limiter that has always
+  guarded the legacy passcode path.
 - The app **auto-pushes** your changes (debounced) and **auto-pulls** on open and every ~20s
   while online. Offline changes are **queued and flushed on reconnect**.
 
@@ -277,10 +291,16 @@ Use it from **Game Setup → Team sync (cloud)**:
 2. **Create a team** (give it a name) or pick one from **Your teams** and tap **Open team**.
    The first time you open a team, your local roster/games merge into it (you're asked before
    your roster is replaced), then it stays in sync.
-3. Tap **✉️ Invite coach** to copy an invite link. Send it to another coach (AirDrop, Messages,
-   email). When they open it and sign in, they join the same team. Invite links are valid for
-   ~14 days and can be used by your whole staff.
-4. The status pill still shows **Synced / Syncing / Offline / Conflict**, and everything remains
+3. Tap **✉️ Invite coach** to copy an invite link. Under **👥 Manage team & members** you can
+   first choose whether the link joins them as a **coach (can edit)** or a **parent (view
+   only)**. Send it (AirDrop, Messages, email); when they open it and sign in, they join the
+   same team in that role. Invite links are valid for ~14 days and can be used by your whole
+   staff.
+4. **Manage access** from the same **👥 Manage team & members** panel (owner only): see everyone
+   on the team, switch a member between **Coach** and **Parent**, or **Remove** them (access is
+   revoked immediately). Non-owners get a **🚪 Leave team** button; the owner gets **🗑️ Delete
+   team**, which removes the shared copy for everyone (each device keeps its own local data).
+5. The status pill still shows **Synced / Syncing / Offline / Conflict**, and everything remains
    **offline-first** — you only need to be online to sign in or switch teams; the cached team
    keeps working with no signal on the sideline.
 

@@ -159,6 +159,49 @@ function canWrite(role) {
   return role === 'owner' || role === 'editor' || role === 'member';
 }
 
+// Roles an owner may assign to a member (owner itself is not assignable this way).
+const ASSIGNABLE_ROLES = ['editor', 'viewer'];
+function normalizeRole(role) {
+  if (typeof role !== 'string') return null;
+  const r = role.trim().toLowerCase();
+  return ASSIGNABLE_ROLES.indexOf(r) >= 0 ? r : null;
+}
+
+// ---- Pure membership transforms (no I/O) so they're unit-testable. Each takes
+// a team doc and returns { ok, doc?, error? }; doc is a fresh doc ready to write
+// (version bumped, updatedAt refreshed) — never mutates the input. ----
+function _reshapeTeam(team, members) {
+  return {
+    version: (team.version || 1) + 1,
+    ownerId: team.ownerId,
+    members: members,
+    displayName: team.displayName || '',
+    data: team.data || null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+function applySetRole(team, uid, role) {
+  if (!isAccountTeam(team)) return { ok: false, error: 'not_account_team' };
+  const r = normalizeRole(role);
+  if (!r) return { ok: false, error: 'invalid_role' };
+  if (uid === team.ownerId) return { ok: false, error: 'cannot_change_owner' };
+  const members = team.members || [];
+  const idx = members.findIndex((m) => m && m.uid === uid);
+  if (idx < 0) return { ok: false, error: 'not_a_member' };
+  if ((members[idx].role || 'member') === r) return { ok: true, doc: null }; // no-op
+  const next = members.map((m, i) => (i === idx ? Object.assign({}, m, { role: r }) : m));
+  return { ok: true, doc: _reshapeTeam(team, next) };
+}
+function applyRemoveMember(team, uid) {
+  if (!isAccountTeam(team)) return { ok: false, error: 'not_account_team' };
+  if (!uid) return { ok: false, error: 'invalid_uid' };
+  if (uid === team.ownerId) return { ok: false, error: 'cannot_remove_owner' };
+  const members = team.members || [];
+  if (!members.some((m) => m && m.uid === uid)) return { ok: true, doc: null }; // already gone
+  const next = members.filter((m) => m && m.uid !== uid);
+  return { ok: true, doc: _reshapeTeam(team, next) };
+}
+
 // Random, collision-checked team id (account teams get generated ids so nobody
 // can squat a friendly slug). Always passes normalizeTeamId().
 function genTeamId() {
@@ -294,7 +337,7 @@ async function addMember(teamId, member) {
       version: (team.version || 1) + 1,
       ownerId: team.ownerId,
       members: (team.members || []).concat([
-        { uid: member.uid, provider: member.provider || 'aad', role: member.role || 'member', addedAt: new Date().toISOString() },
+        { uid: member.uid, provider: member.provider || 'aad', role: member.role || 'member', name: member.name || '', addedAt: new Date().toISOString() },
       ]),
       displayName: team.displayName || teamId,
       data: team.data || null,
@@ -310,6 +353,58 @@ async function addMember(teamId, member) {
     }
   }
   throw new Error('member_add_contention');
+}
+
+// Change a member's role (owner-only decision enforced by the caller) with an
+// optimistic-retry loop. Returns the resulting team doc, or an { error } object.
+async function setMemberRole(teamId, uid, role) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const team = await readTeam(teamId);
+    if (!team || !isAccountTeam(team)) return { error: 'no_such_team' };
+    const res = applySetRole(team, uid, role);
+    if (!res.ok) return { error: res.error };
+    if (!res.doc) return team; // no-op
+    try {
+      await writeTeam(teamId, res.doc, { ifMatch: team._etag });
+      return res.doc;
+    } catch (e) {
+      if (isPreconditionError(e)) continue;
+      throw e;
+    }
+  }
+  throw new Error('member_role_contention');
+}
+
+// Remove a member from a team (owner removing someone, or a member leaving) with
+// an optimistic-retry loop. Returns the resulting team doc, or an { error } object.
+async function removeMember(teamId, uid) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const team = await readTeam(teamId);
+    if (!team || !isAccountTeam(team)) return { error: 'no_such_team' };
+    const res = applyRemoveMember(team, uid);
+    if (!res.ok) return { error: res.error };
+    if (!res.doc) return team; // already gone
+    try {
+      await writeTeam(teamId, res.doc, { ifMatch: team._etag });
+      return res.doc;
+    } catch (e) {
+      if (isPreconditionError(e)) continue;
+      throw e;
+    }
+  }
+  throw new Error('member_remove_contention');
+}
+
+// Permanently delete a team blob (owner-only decision enforced by the caller).
+async function deleteTeam(teamId) {
+  const c = await container();
+  const blob = c.getBlockBlobClient(teamId + '.json');
+  try {
+    await blob.deleteIfExists();
+  } catch (e) {
+    if (e.statusCode === 404 || e.code === 'BlobNotFound') return;
+    throw e;
+  }
 }
 
 /* -------- Short share links (no passcode) --------
@@ -335,10 +430,23 @@ function normalizeShareCode(code) {
   return t;
 }
 
+// Default share lifetime. Shares are convenience links (a game/roster snapshot),
+// so they expire on their own; an authenticated creator can also revoke early.
+const SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 // Write a share, retrying on the (astronomically rare) code collision.
-async function writeShare(payload) {
+// opts.createdBy (uid) enables later revocation; opts.ttlMs overrides the default.
+async function writeShare(payload, opts) {
   const c = await sharesContainer();
-  const doc = JSON.stringify({ v: 1, createdAt: new Date().toISOString(), payload });
+  const now = Date.now();
+  const ttl = opts && Number.isFinite(opts.ttlMs) && opts.ttlMs > 0 ? opts.ttlMs : SHARE_TTL_MS;
+  const doc = JSON.stringify({
+    v: 1,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + ttl).toISOString(),
+    createdBy: (opts && opts.createdBy) || null,
+    payload,
+  });
   const bytes = Buffer.byteLength(doc);
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = newShareCode(8);
@@ -357,16 +465,39 @@ async function writeShare(payload) {
   throw new Error('share_code_exhausted');
 }
 
-async function readShare(code) {
+// Read the full share doc (metadata + payload), or null if missing.
+async function readShareDoc(code) {
   const c = await sharesContainer();
   const blob = c.getBlockBlobClient(code + '.json');
   try {
     const dl = await blob.download();
-    const txt = await streamToString(dl.readableStreamBody);
-    const doc = JSON.parse(txt);
-    return doc.payload !== undefined ? doc.payload : doc;
+    return JSON.parse(await streamToString(dl.readableStreamBody));
   } catch (e) {
     if (e.statusCode === 404 || e.code === 'BlobNotFound') return null;
+    throw e;
+  }
+}
+
+function shareExpired(doc) {
+  return !!(doc && doc.expiresAt && Date.parse(doc.expiresAt) < Date.now());
+}
+
+async function readShare(code) {
+  const doc = await readShareDoc(code);
+  if (doc == null) return null;
+  // Legacy shares (no wrapper) were stored as the bare payload.
+  if (doc.payload === undefined) return doc;
+  if (shareExpired(doc)) return null;
+  return doc.payload;
+}
+
+async function deleteShare(code) {
+  const c = await sharesContainer();
+  const blob = c.getBlockBlobClient(code + '.json');
+  try {
+    await blob.deleteIfExists();
+  } catch (e) {
+    if (e.statusCode === 404 || e.code === 'BlobNotFound') return;
     throw e;
   }
 }
@@ -381,6 +512,9 @@ module.exports = {
   isPreconditionError,
   writeShare,
   readShare,
+  readShareDoc,
+  deleteShare,
+  shareExpired,
   normalizeShareCode,
   // accounts / membership
   identityFrom,
@@ -388,6 +522,9 @@ module.exports = {
   isMember,
   roleOf,
   canWrite,
+  normalizeRole,
+  applySetRole,
+  applyRemoveMember,
   genTeamId,
   readUser,
   writeUser,
@@ -396,4 +533,7 @@ module.exports = {
   writeInvite,
   readInvite,
   addMember,
+  setMemberRole,
+  removeMember,
+  deleteTeam,
 };

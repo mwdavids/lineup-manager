@@ -36,6 +36,37 @@ function recordSuccess(teamId, ip) {
   attempts.delete(keyFor(teamId, ip));
 }
 
+/* ------------------------------------------------------------------------
+ * Generic sliding-window request limiter (per bucket + key), used to blunt
+ * abuse of the low-/no-auth endpoints (invite, accept, share). Best-effort
+ * in-memory, per warm instance — same tradeoff as the passcode limiter above.
+ * Returns true when the caller is over the limit and should be rejected (429).
+ * ---------------------------------------------------------------------- */
+const buckets = new Map(); // 'bucket|key' -> number[] (recent hit timestamps)
+
+function rateLimit(bucket, key, max, windowMs) {
+  const now = Date.now();
+  const k = (bucket || '?') + '|' + (key || '?');
+  const win = windowMs || 60 * 1000;
+  const limit = max || 30;
+  const hits = (buckets.get(k) || []).filter((t) => now - t < win);
+  if (hits.length >= limit) {
+    buckets.set(k, hits); // keep the window pruned even when blocking
+    return true;
+  }
+  hits.push(now);
+  buckets.set(k, hits);
+  // Opportunistic cleanup so the map can't grow without bound on a warm instance.
+  if (buckets.size > 5000) {
+    for (const [mk, arr] of buckets) {
+      const live = arr.filter((t) => now - t < win);
+      if (live.length) buckets.set(mk, live);
+      else buckets.delete(mk);
+    }
+  }
+  return false;
+}
+
 function clientIp(req) {
   const h = (req && req.headers) || {};
   const xff = h['x-forwarded-for'] || h['X-Forwarded-For'];
@@ -43,4 +74,4 @@ function clientIp(req) {
   return h['x-azure-clientip'] || h['x-client-ip'] || 'unknown';
 }
 
-module.exports = { isBlocked, recordFail, recordSuccess, clientIp };
+module.exports = { isBlocked, recordFail, recordSuccess, rateLimit, clientIp };

@@ -475,6 +475,23 @@
           <button class="btn bad sm" id="syncDisconnectBtn">Disconnect</button>
           <button type="button" class="info" data-info="Sync now pushes your changes and pulls others’ right away. Invite coach makes a link that lets another signed-in coach join this team. Disconnect stops syncing on this device but keeps all your data locally.">ⓘ</button>
         </div>
+        <details id="syncManageWrap" class="hidden" style="margin-top:10px">
+          <summary class="muted small" style="cursor:pointer">👥 Manage team &amp; members</summary>
+          <div id="syncInviteRoleRow" class="row small hidden" style="margin-top:8px;align-items:center">
+            <label class="fld" style="margin:0">Invite as
+              <select id="syncInviteRole">
+                <option value="editor">Coach (can edit)</option>
+                <option value="viewer">Parent (view only)</option>
+              </select>
+            </label>
+            <span class="muted small">Use “✉️ Invite coach” above to copy the link.</span>
+          </div>
+          <div id="syncMembers" style="margin-top:8px"></div>
+          <div class="row" style="margin-top:10px">
+            <button class="btn bad sm hidden" id="syncLeaveBtn">🚪 Leave team</button>
+            <button class="btn bad sm hidden" id="syncDeleteTeamBtn">🗑️ Delete team</button>
+          </div>
+        </details>
       </div>
     </div>
   </section>
@@ -3302,6 +3319,7 @@ var Sync = {
   passcode:null, endpoint:'', baseVersion:0,
   connected:false, status:'off', dirty:false, busy:false, readOnly:false,
   lastSyncAt:0, lastError:'', _applying:false, _pushT:null, _pollT:null,
+  members:null, ownerId:null,
   account:{ checked:false, loggedIn:false, user:null, teams:[] }
 };
 
@@ -3394,6 +3412,7 @@ function renderSyncUI(){
     var teamLabel = (Sync.mode==='account' && Sync.teamName) ? Sync.teamName : Sync.teamId;
     line.innerHTML='Team <b>'+syncEsc(teamLabel)+'</b> · v'+Sync.baseVersion+syncEsc(extra);
   }
+  accRenderManage();
 }
 
 // Render the Microsoft-account panel (sign-in state + "your teams" picker).
@@ -3480,6 +3499,7 @@ function syncDisconnect(){
   if(Sync._pushT){ clearTimeout(Sync._pushT); Sync._pushT=null; }
   Sync.connected=false; Sync.teamId=null; Sync.teamName=''; Sync.role=null; Sync.passcode=null;
   Sync.mode='passcode'; Sync.baseVersion=0; Sync.dirty=false; Sync.readOnly=false;
+  Sync.members=null; Sync.ownerId=null;
   syncSaveConfig();
   syncSetStatus('off');
   toast('Disconnected — your data stays on this device');
@@ -3553,6 +3573,8 @@ async function accOpenTeam(teamId, teamName, opts){
   if(r.status!==200 || !r.data){ Sync.connected=false; syncSetStatus('off'); if(!opts.silent) toast((r.data&&r.data.message)||'Could not open team'); return false; }
   if(r.data.name) Sync.teamName=r.data.name;
   if(r.data.role){ Sync.role=r.data.role; Sync.readOnly=(r.data.role==='viewer'); }
+  Sync.members = Array.isArray(r.data.members) ? r.data.members : null;
+  Sync.ownerId = r.data.ownerId || null;
   if(opts.silent){
     // Returning device auto-reconnect: take the team's latest data, no merge prompt.
     if(r.data.data) syncApply(r.data.data);
@@ -3576,13 +3598,96 @@ async function accOpenTeam(teamId, teamName, opts){
 }
 async function accInvite(){
   if(Sync.mode!=='account' || !Sync.teamId){ toast('Open an account team first'); return; }
+  var roleSel=document.getElementById('syncInviteRole');
+  var role=(roleSel && roleSel.value==='viewer') ? 'viewer' : 'editor';
   var r;
-  try{ r=await accFetch('/invite',{method:'POST',body:{teamId:Sync.teamId}}); }
+  try{ r=await accFetch('/invite',{method:'POST',body:{teamId:Sync.teamId, role:role}}); }
   catch(e){ toast('Could not reach the server'); return; }
   if(r.status!==200 || !r.data || !r.data.code){ toast((r.data&&r.data.message)||'Could not create invite'); return; }
   var link=location.origin+'/?join='+encodeURIComponent(r.data.code);
-  try{ await navigator.clipboard.writeText(link); toast('Invite link copied — send it to your coach'); }
-  catch(e){ if(typeof prompt==='function') prompt('Copy this invite link and send it to your coach:', link); else toast('Invite link: '+link); }
+  var kind=(r.data.role==='viewer')?'view-only parent':'coach';
+  try{ await navigator.clipboard.writeText(link); toast('Invite link copied ('+kind+') — send it along'); }
+  catch(e){ if(typeof prompt==='function') prompt('Copy this '+kind+' invite link and send it:', link); else toast('Invite link: '+link); }
+}
+
+/* ---------- Owner: member management ---------- */
+// Render the "Manage team & members" panel. Owners see the full roster with
+// role controls and remove buttons; non-owners see a Leave button.
+function accRenderManage(){
+  var wrap=document.getElementById('syncManageWrap'); if(!wrap) return;
+  var isAccount=(Sync.mode==='account' && Sync.connected);
+  wrap.classList.toggle('hidden', !isAccount);
+  if(!isAccount) return;
+  var isOwner=(Sync.role==='owner');
+  var roleRow=document.getElementById('syncInviteRoleRow'); if(roleRow) roleRow.classList.toggle('hidden', !isOwner);
+  var leaveBtn=document.getElementById('syncLeaveBtn'); if(leaveBtn) leaveBtn.classList.toggle('hidden', isOwner);
+  var delBtn=document.getElementById('syncDeleteTeamBtn'); if(delBtn) delBtn.classList.toggle('hidden', !isOwner);
+  var host=document.getElementById('syncMembers'); if(!host) return;
+  host.innerHTML='';
+  if(!isOwner || !Array.isArray(Sync.members)){
+    host.innerHTML='<div class="muted small">You are '+(Sync.role==='viewer'?'a view-only member':'a member')+' of this team.</div>';
+    return;
+  }
+  var title=el('div','muted small','Members ('+Sync.members.length+')'); host.appendChild(title);
+  Sync.members.forEach(function(m){
+    var row=el('div','row small'); row.style.cssText='justify-content:space-between;align-items:center;gap:8px;margin-top:6px';
+    var who=el('span',null,(m.name||m.uid)+(m.role==='owner'?' (owner)':'')); who.style.cssText='overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    row.appendChild(who);
+    if(m.role==='owner'){ host.appendChild(row); return; }
+    var ctrls=el('span','row'); ctrls.style.cssText='gap:6px;align-items:center';
+    var sel=document.createElement('select');
+    [['editor','Coach'],['viewer','Parent']].forEach(function(o){ var op=document.createElement('option'); op.value=o[0]; op.textContent=o[1]; if(m.role===o[0]) op.selected=true; sel.appendChild(op); });
+    sel.onchange=function(){ accSetRole(m.uid, sel.value); };
+    ctrls.appendChild(sel);
+    var rm=el('button','btn bad sm','Remove'); rm.onclick=function(){ accRemoveMember(m.uid, m.name||m.uid); };
+    ctrls.appendChild(rm);
+    row.appendChild(ctrls);
+    host.appendChild(row);
+  });
+}
+async function accSetRole(uid, role){
+  if(Sync.mode!=='account' || !Sync.teamId) return;
+  var r;
+  try{ r=await accFetch('/members',{method:'PATCH',body:{teamId:Sync.teamId, uid:uid, role:role}}); }
+  catch(e){ toast('Could not reach the server'); return; }
+  if(r.status!==200){ toast((r.data&&r.data.message)||'Could not change role'); return; }
+  if(r.data && Array.isArray(r.data.members)) Sync.members=r.data.members;
+  renderSyncUI();
+  toast('Role updated');
+}
+async function accRemoveMember(uid, label){
+  if(Sync.mode!=='account' || !Sync.teamId) return;
+  if(typeof confirm==='function' && !confirm('Remove '+(label||'this member')+' from the team? They lose access immediately.')) return;
+  var r;
+  try{ r=await accFetch('/members',{method:'DELETE',body:{teamId:Sync.teamId, uid:uid}}); }
+  catch(e){ toast('Could not reach the server'); return; }
+  if(r.status!==200){ toast((r.data&&r.data.message)||'Could not remove member'); return; }
+  if(r.data && Array.isArray(r.data.members)) Sync.members=r.data.members;
+  renderSyncUI();
+  toast('Member removed');
+}
+async function accLeaveTeam(){
+  if(Sync.mode!=='account' || !Sync.teamId) return;
+  if(!Sync.account.user || !Sync.account.user.uid){ toast('Sign in first'); return; }
+  if(typeof confirm==='function' && !confirm('Leave this team? It stays on your other devices only if you rejoin. Your local copy is kept.')) return;
+  var r;
+  try{ r=await accFetch('/members',{method:'DELETE',body:{teamId:Sync.teamId, uid:Sync.account.user.uid}}); }
+  catch(e){ toast('Could not reach the server'); return; }
+  if(r.status!==200){ toast((r.data&&r.data.message)||'Could not leave team'); return; }
+  syncDisconnect();
+  await accLoadTeams();
+  toast('You left the team');
+}
+async function accDeleteTeam(){
+  if(Sync.mode!=='account' || !Sync.teamId || Sync.role!=='owner'){ toast('Only the owner can delete the team'); return; }
+  if(typeof confirm==='function' && !confirm('Permanently delete team “'+(Sync.teamName||Sync.teamId)+'” for everyone? This cannot be undone. Your local copy is kept.')) return;
+  var r;
+  try{ r=await accFetch('/team?teamId='+encodeURIComponent(Sync.teamId),{method:'DELETE'}); }
+  catch(e){ toast('Could not reach the server'); return; }
+  if(r.status!==200){ toast((r.data&&r.data.message)||'Could not delete team'); return; }
+  syncDisconnect();
+  await accLoadTeams();
+  toast('Team deleted');
 }
 // Redeem a ?join=<code> invite deep link on load.
 async function accAcceptFromUrl(){
@@ -3718,6 +3823,8 @@ function initSync(){
     accOpenTeam(sel.value, t?t.name:'');
   };
   var ib=document.getElementById('syncInviteBtn'); if(ib) ib.onclick=accInvite;
+  var lv=document.getElementById('syncLeaveBtn'); if(lv) lv.onclick=accLeaveTeam;
+  var dt=document.getElementById('syncDeleteTeamBtn'); if(dt) dt.onclick=accDeleteTeam;
   window.addEventListener('online', function(){ if(Sync.connected){ if(Sync.dirty && !Sync.readOnly) syncPush(); else syncPull(); } });
   window.addEventListener('offline', function(){ if(Sync.connected) syncSetStatus('offline'); });
   // Passcode teams reconnect immediately (no auth needed). Account teams wait for the
