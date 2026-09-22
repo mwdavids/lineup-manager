@@ -2949,12 +2949,21 @@ function findPlayerByName(name){
   for(var i=0;i<state.players.length;i++){ if((state.players[i].name||'').trim().toLowerCase()===n) return state.players[i]; }
   return null;
 }
-// Attach shared players to the local roster by name; return id map (shared id -> local id).
-// Players with no local match are added (keeping their id).
+// Match an incoming shared player to a local one, UUID first (stable across devices and
+// renames), then name as a legacy fallback for rosters that predate strong ids or were
+// created independently on two devices. Only strong ids are trusted for id-matching so a
+// stale weak id can't collide with an unrelated local player.
+function findPlayerMatch(p){
+  if(!p) return null;
+  if(p.id && isStrongId(p.id)){ var m=byId(p.id); if(m) return m; }
+  return findPlayerByName(p.name);
+}
+// Attach shared players to the local roster, matching by UUID then name; return id map
+// (shared id -> local id). Players with no local match are added (keeping their id).
 function reconcilePlayers(sharedPlayers){
   var map={};
   (sharedPlayers||[]).forEach(function(p){
-    var match=findPlayerByName(p.name);
+    var match=findPlayerMatch(p);
     if(match){ map[p.id]=match.id; }
     else { var np=_clone(p); state.players.push(np); map[p.id]=np.id; }
   });
@@ -3023,7 +3032,7 @@ function importSharedRoster(payload, opts){
   if(!ok) return false;
   var added=0, updated=0;
   players.forEach(function(p){
-    var match=findPlayerByName(p.name);
+    var match=findPlayerMatch(p);
     if(match){
       // Copy every attribute from the shared player except its id, so the local
       // player keeps its identity (games reference it) but picks up foot, positions,
@@ -3819,6 +3828,7 @@ window.__LM__ = {
   shareUrl:shareUrl, routeImport:routeImport, checkHashImport:checkHashImport,
   loadSharedCode:loadSharedCode, buildPrintView:buildPrintView,
   parseImportText:parseImportText, currentGame:currentGame, save:save,
+  findPlayerByName:findPlayerByName, findPlayerMatch:findPlayerMatch, reconcilePlayers:reconcilePlayers, importSharedRoster:importSharedRoster, remapGameIds:remapGameIds,
   Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase,
   accCheckAuth:accCheckAuth, accLoadTeams:accLoadTeams, accCreateTeam:accCreateTeam, accOpenTeam:accOpenTeam, accInvite:accInvite
 };
