@@ -4,14 +4,17 @@
   "description": "Offline-first lineup planner for U13 11v11 (4-3-3). Root holds dev/test tooling; the app itself is the single-file index.html.",
   "private": true,
   "scripts": {
-    "test": "node --test test/planner.test.js test/store.test.js test/merge.test.js test/outbox.test.js test/sync-merge.test.js",
+    "test": "node --test --test-force-exit test/planner.test.js test/store.test.js test/merge.test.js test/outbox.test.js test/sync-merge.test.js test/migrate-ids.test.js test/sync-entity.test.js test/migrate-account.test.js",
     "test:planner": "node --test test/planner.test.js",
     "test:store": "node --test test/store.test.js",
     "test:merge": "node --test test/merge.test.js",
     "test:outbox": "node --test test/outbox.test.js",
-    "test:sync-merge": "node --test test/sync-merge.test.js"
+    "test:sync-merge": "node --test test/sync-merge.test.js",
+    "test:sync-entity": "node --test --test-force-exit test/sync-entity.test.js",
+    "test:int": "node --test test/integration/store-games.int.test.js",
+    "azurite": "azurite --silent --location .azurite --debug .azurite/debug.log"
   },
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=20.14" },
   "devDependencies": {
     "jsdom": "^24.1.0"
   }

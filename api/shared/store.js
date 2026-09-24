@@ -405,6 +405,157 @@ async function deleteTeam(teamId) {
     if (e.statusCode === 404 || e.code === 'BlobNotFound') return;
     throw e;
   }
+  // Physical entity split: a team's games live in their own blobs — clear them too.
+  try { await deleteAllGames(teamId); } catch (e) { /* best-effort */ }
+}
+
+/* ==========================================================================
+ * Per-game blobs (physical entity split): teamgames/<teamId>/<gameId>.json
+ * ------------------------------------------------------------------------
+ * Each game is its own versioned blob so two coaches editing DIFFERENT games
+ * never collide. The blob body is { teamId, gameId, version, game, updatedAt };
+ * the numeric `version` is also mirrored into blob metadata so listGames() can
+ * report versions without downloading every body. Optimistic concurrency uses
+ * the numeric version plus the blob ETag, exactly like team docs.
+ * ======================================================================== */
+const GAMES_CONTAINER = 'teamgames';
+async function gamesContainer() {
+  return getContainer(GAMES_CONTAINER);
+}
+// Game ids are client-minted (uid('g') → 'g_' + UUID). Keep them blob-name safe.
+function normalizeGameId(id) {
+  if (typeof id !== 'string') return null;
+  const t = id.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{1,80}$/.test(t)) return null;
+  return t;
+}
+function gameBlobName(teamId, gameId) {
+  return teamId + '/' + gameId + '.json';
+}
+async function readGame(teamId, gameId) {
+  const c = await gamesContainer();
+  const blob = c.getBlockBlobClient(gameBlobName(teamId, gameId));
+  try {
+    const dl = await blob.download();
+    const doc = JSON.parse(await streamToString(dl.readableStreamBody));
+    doc._etag = dl.etag;
+    return doc;
+  } catch (e) {
+    if (e.statusCode === 404 || e.code === 'BlobNotFound') return null;
+    throw e;
+  }
+}
+// Write a game doc. opts.ifNoneMatch='*' creates only if absent; opts.ifMatch=<etag>
+// updates only if unchanged. The version is mirrored into blob metadata for listGames.
+async function writeGame(teamId, gameId, doc, opts) {
+  const c = await gamesContainer();
+  const blob = c.getBlockBlobClient(gameBlobName(teamId, gameId));
+  const body = JSON.stringify(doc);
+  const conditions = {};
+  if (opts && opts.ifNoneMatch) conditions.ifNoneMatch = opts.ifNoneMatch;
+  if (opts && opts.ifMatch) conditions.ifMatch = opts.ifMatch;
+  const res = await blob.upload(body, Buffer.byteLength(body), {
+    blobHTTPHeaders: { blobContentType: 'application/json' },
+    metadata: { version: String(doc.version || 1) },
+    conditions,
+  });
+  return res.etag;
+}
+async function deleteGame(teamId, gameId) {
+  const c = await gamesContainer();
+  const blob = c.getBlockBlobClient(gameBlobName(teamId, gameId));
+  try {
+    await blob.deleteIfExists();
+  } catch (e) {
+    if (e.statusCode === 404 || e.code === 'BlobNotFound') return;
+    throw e;
+  }
+}
+// List a team's games as [{ gameId, version }] using blob metadata — no body download.
+async function listGames(teamId) {
+  const c = await gamesContainer();
+  const prefix = teamId + '/';
+  const out = [];
+  for await (const b of c.listBlobsFlat({ prefix, includeMetadata: true })) {
+    const gameId = b.name.slice(prefix.length).replace(/\.json$/, '');
+    if (!gameId) continue;
+    const version = Number((b.metadata && b.metadata.version) || 0) || 1;
+    out.push({ gameId, version });
+  }
+  return out;
+}
+async function deleteAllGames(teamId) {
+  const c = await gamesContainer();
+  const prefix = teamId + '/';
+  for await (const b of c.listBlobsFlat({ prefix })) {
+    try { await c.getBlockBlobClient(b.name).deleteIfExists(); } catch (e) { /* best-effort */ }
+  }
+}
+// Upsert games into their own blobs, creating any that don't exist yet, and return
+// the ordered list of ids. Used as a safety net when an older cached client still
+// PUTs embedded games to /api/team during the migration window (existing per-game
+// blobs are left untouched so a live edit is never clobbered).
+async function upsertGamesIfAbsent(teamId, games) {
+  const order = [];
+  for (const g of (games || [])) {
+    const gid = g && normalizeGameId(g.id);
+    if (!gid) continue;
+    order.push(gid);
+    try {
+      const existing = await readGame(teamId, gid);
+      if (!existing) {
+        await writeGame(teamId, gid, { teamId, gameId: gid, version: 1, game: g, updatedAt: new Date().toISOString() });
+      }
+    } catch (e) { /* best-effort */ }
+  }
+  return order;
+}
+// One-time server-side migration: if a team doc still embeds its games inside
+// `data.games`, move each game into its own blob and strip games from the team doc,
+// leaving an ordered `data.gameOrder` index behind. Idempotent and best-effort:
+// on any per-game failure we leave the embedded copy so nothing is lost. Returns
+// the (possibly rewritten) team doc so the caller can serve it immediately.
+async function migrateTeamGames(teamId, team) {
+  if (!team || !team.data || !Array.isArray(team.data.games) || !team.data.games.length) return team;
+  const games = team.data.games;
+  const order = [];
+  let allMoved = true;
+  for (const g of games) {
+    const gid = g && normalizeGameId(g.id);
+    if (!gid) { allMoved = false; continue; }
+    order.push(gid);
+    try {
+      const existing = await readGame(teamId, gid);
+      if (!existing) {
+        await writeGame(teamId, gid, { teamId, gameId: gid, version: 1, game: g, updatedAt: new Date().toISOString() });
+      }
+    } catch (e) {
+      allMoved = false; // leave the embedded copy in place for a later retry
+    }
+  }
+  if (!allMoved) return team; // don't strip until every game is safely split out
+  const newData = Object.assign({}, team.data, { gameOrder: order });
+  delete newData.games;
+  const doc = {
+    version: (team.version || 1) + 1,
+    data: newData,
+    updatedAt: new Date().toISOString(),
+  };
+  if (isAccountTeam(team)) {
+    doc.ownerId = team.ownerId;
+    doc.members = team.members || [];
+    doc.displayName = team.displayName || teamId;
+  } else {
+    doc.passHash = team.passHash;
+    doc.salt = team.salt;
+  }
+  try {
+    await writeTeam(teamId, doc, { ifMatch: team._etag });
+    doc._etag = undefined;
+    return doc;
+  } catch (e) {
+    return team; // lost the race — a concurrent writer will migrate; serve current
+  }
 }
 
 /* -------- Short share links (no passcode) --------
@@ -536,4 +687,13 @@ module.exports = {
   setMemberRole,
   removeMember,
   deleteTeam,
+  // per-game entity storage (physical split)
+  normalizeGameId,
+  readGame,
+  writeGame,
+  deleteGame,
+  listGames,
+  deleteAllGames,
+  upsertGamesIfAbsent,
+  migrateTeamGames,
 };

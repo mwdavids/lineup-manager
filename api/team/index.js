@@ -65,6 +65,13 @@ module.exports = async function (context, req) {
   }
 
   if (method === 'GET') {
+    // One-time physical split: move any embedded games into their own blobs and
+    // serve the games-stripped doc (with an ordered gameOrder index) going forward.
+    try {
+      team = await store.migrateTeamGames(teamId, team);
+    } catch (e) {
+      context.log.warn('team GET: game migration skipped', e);
+    }
     const out = { data: team.data || null, version: team.version || 1 };
     if (store.isAccountTeam(team)) {
       out.name = team.displayName || teamId;
@@ -122,10 +129,24 @@ module.exports = async function (context, req) {
     return json(context, 409, { error: 'conflict', data: team.data || null, version: team.version || 1, updatedAt: team.updatedAt || null });
   }
 
+  // Defensive migration safety net: an older cached client may still PUT games
+  // embedded in `data`. Split them into per-game blobs (without clobbering any
+  // that already exist) and strip them from the team doc, leaving a gameOrder.
+  let putData = body.data;
+  if (putData && Array.isArray(putData.games) && putData.games.length) {
+    try {
+      const order = await store.upsertGamesIfAbsent(teamId, putData.games);
+      putData = Object.assign({}, putData, { gameOrder: order });
+      delete putData.games;
+    } catch (e) {
+      context.log.warn('team PUT: embedded-game split failed; storing as-is', e);
+    }
+  }
+
   // Preserve ownership/passcode metadata; only version/data/updatedAt change.
   const doc = {
     version: (team.version || 1) + 1,
-    data: body.data,
+    data: putData,
     updatedAt: new Date().toISOString(),
   };
   if (store.isAccountTeam(team)) {
