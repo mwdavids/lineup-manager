@@ -7,6 +7,11 @@
 
 # Azurite (local storage emulator)
 api/.azurite/
+/.azurite/
+/.azurite3/
 __blobstorage__/
 __queuestorage__/
 __azurite_db*.json
+
+# Local tooling scratch
+/.playwright-mcp/

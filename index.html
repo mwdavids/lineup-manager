@@ -211,6 +211,18 @@
   .poswrap{display:flex;gap:6px;flex-wrap:wrap}
   .hidden{display:none!important}
   .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(80px + var(--safe-b));background:#111;color:#fff;padding:10px 16px;border-radius:10px;z-index:60;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
+  /* Mandatory sign-in gate: blocks the app until the user has signed in once
+     (online). Offline returning users with a cached session skip it. */
+  .authgate{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;padding:24px;
+    background:linear-gradient(160deg,var(--bg),var(--bg2))}
+  .authgate.show{display:flex}
+  .authgate .card{background:var(--panel);color:var(--ink);max-width:420px;width:100%;border-radius:16px;padding:24px;box-shadow:0 10px 34px rgba(0,0,0,.4);text-align:center}
+  .authgate h2{margin:0 0 12px;font-size:20px}
+  .authgate p{font-size:15px;line-height:1.45;margin:0 0 18px;color:var(--muted)}
+  .authgate .btn{width:100%}
+  .authgate .spin{width:26px;height:26px;margin:4px auto 0;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:lmspin 0.8s linear infinite}
+  @keyframes lmspin{to{transform:rotate(360deg)}}
+  body.lm-gated{overflow:hidden}
   .toast.show{opacity:.95}
   .seg{display:flex;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
   .seg button{flex:1;border:none;background:#fff;padding:10px;font-weight:700;min-height:var(--tap);cursor:pointer}
@@ -340,6 +352,16 @@
 </style>
 </head>
 <body>
+<!-- Mandatory sign-in gate (Phase 1). Shown by updateAuthGate() when the user is
+     online but not signed in, or has never signed in on this device. -->
+<div id="lmAuthGate" class="authgate" role="dialog" aria-modal="true" aria-labelledby="lmAuthGateTitle">
+  <div class="card">
+    <h2 id="lmAuthGateTitle">Lineup Manager</h2>
+    <p id="lmAuthGateMsg">Checking your sign-in…</p>
+    <button class="btn hidden" id="lmAuthGateBtn">🔐 Sign in with Microsoft</button>
+    <div class="spin" id="lmAuthGateSpin"></div>
+  </div>
+</div>
 <header>
   <div>
     <h1>Lineup Manager</h1>
@@ -489,9 +511,9 @@
     <div class="panel noprint">
       <div class="row" style="justify-content:space-between;align-items:center">
         <h2 style="margin:0">Team sync (cloud) <span id="syncPill" class="pill s-off">Not connected</span></h2>
-        <button type="button" class="info" data-info="Optional. Connect a Team ID + shared passcode to keep this device in sync with other coaches over the internet. Leave it off to stay fully local — the app works exactly the same offline.">ⓘ</button>
+        <button type="button" class="info" data-info="Your teams and games are tied to your Microsoft account. Sign in once on each device to sync your roster and games across them. After signing in the app keeps working offline on the sideline.">ⓘ</button>
       </div>
-      <div class="muted small" style="margin:6px 0 10px">Optional cloud sync so you, another coach, and your iPad share the same roster + games. <b>Sign in with a Microsoft account</b> and your teams follow you across devices — no passcode to share. The app still works fully offline on the sideline; changes upload when you’re back online.</div>
+      <div class="muted small" style="margin:6px 0 10px">Your roster, games, and settings are tied to your <b>Microsoft account</b> and follow you across devices. Sign in once per device; after that the app still works fully offline on the sideline and changes upload when you’re back online.</div>
 
       <!-- Account sign-in (Microsoft) -->
       <div id="syncAccount">
@@ -3529,11 +3551,13 @@ function initInfo(){
    ============================================================ */
 var LS_SYNC = 'lineupManager.sync.v1';
 var LS_SYNC_BASE = 'lineupManager.sync.base.v1';   // last-synced server snapshot (3-way merge ancestor)
+var LS_EVER = 'lineupManager.auth.ever.v1';        // set once the user has signed in on this device
+var LS_MIGRATED = 'lineupManager.migrate.v1';      // set once first-login local→account migration was offered/done
 var Sync = {
   mode:'passcode', teamId:null, teamName:'', role:null,
-  passcode:null, endpoint:'', baseVersion:0, baseDoc:null,
+  passcode:null, endpoint:'', baseVersion:0, baseDoc:null, gameVers:{},
   connected:false, status:'off', dirty:false, busy:false, readOnly:false,
-  lastSyncAt:0, lastChangeAt:0, lastError:'', _applying:false, _pushT:null, _pollT:null,
+  lastSyncAt:0, lastChangeAt:0, lastError:'', _applying:false, _pushT:null, _pollT:null, _retry:0,
   members:null, ownerId:null,
   account:{ checked:false, loggedIn:false, user:null, teams:[] }
 };
@@ -3559,17 +3583,19 @@ function syncLoadConfig(){
 function syncSaveBase(){
   try{
     if(!Sync.connected || !Sync.baseDoc){ localStorage.removeItem(LS_SYNC_BASE); return; }
-    localStorage.setItem(LS_SYNC_BASE, JSON.stringify({ teamId:Sync.teamId, version:Sync.baseVersion, doc:Sync.baseDoc }));
+    localStorage.setItem(LS_SYNC_BASE, JSON.stringify({ teamId:Sync.teamId, version:Sync.baseVersion, doc:Sync.baseDoc, gameVers:Sync.gameVers||{} }));
   }catch(e){}
 }
 function syncLoadBase(){
   try{
     var raw=localStorage.getItem(LS_SYNC_BASE);
-    if(!raw){ Sync.baseDoc=null; return; }
+    if(!raw){ Sync.baseDoc=null; Sync.gameVers={}; return; }
     var b=JSON.parse(raw);
     // Only trust the snapshot if it belongs to the team we're reconnecting to.
-    Sync.baseDoc = (b && b.teamId===Sync.teamId && b.doc) ? b.doc : null;
-  }catch(e){ Sync.baseDoc=null; }
+    var ok=(b && b.teamId===Sync.teamId && b.doc);
+    Sync.baseDoc = ok ? b.doc : null;
+    Sync.gameVers = (ok && b.gameVers && typeof b.gameVers==='object') ? b.gameVers : {};
+  }catch(e){ Sync.baseDoc=null; Sync.gameVers={}; }
 }
 function syncSaveConfig(){
   try{
@@ -3700,7 +3726,10 @@ function renderSyncUI(){
   pill.className='pill s-'+Sync.status;
   pill.textContent = (Sync.status==='synced' && Sync.lastSyncAt) ? ('Synced · '+timeAgo(Sync.lastSyncAt)) : label;
   var dis=document.getElementById('syncDisconnected'), con=document.getElementById('syncConnected');
-  if(dis&&con){ dis.classList.toggle('hidden', Sync.connected); con.classList.toggle('hidden', !Sync.connected); }
+  // Passcode connect UI is retired (login-first). Keep it hidden; migration reads
+  // any legacy passcode config from localStorage, not from this UI.
+  if(dis) dis.classList.add('hidden');
+  if(con) con.classList.toggle('hidden', !Sync.connected);
   var inv=document.getElementById('syncInviteBtn');
   if(inv) inv.classList.toggle('hidden', !(Sync.connected && Sync.mode==='account'));
   accRenderUI();
@@ -3714,6 +3743,7 @@ function renderSyncUI(){
     line.innerHTML='Team <b>'+syncEsc(teamLabel)+'</b> · v'+Sync.baseVersion+syncEsc(extra);
   }
   accRenderManage();
+  updateAuthGate();
 }
 
 // Render the Microsoft-account panel (sign-in state + "your teams" picker).
@@ -3778,15 +3808,17 @@ async function syncConnect(teamId, passcode, endpoint){
 
   Sync.mode='passcode';
   Sync.teamId=teamId; Sync.passcode=passcode; Sync.connected=true; Sync.readOnly=false;
+  var joined=await syncAssembleDoc(r.data.data||{});
+  Sync.gameVers=joined.gameVers||{};
   if(r.data.data){
     // Team already has data — merge it into local, then push the union up.
     var doMerge = await uiConfirm({title:'Team has saved data', message:'This team already has saved data.\n\nMerge it with what’s on this device (recommended), or overwrite the team with only this device’s data?', confirmLabel:'Merge', cancelLabel:'Overwrite team'});
-    if(doMerge) syncMergeIn(r.data.data);
+    if(doMerge) syncMergeIn(joined.doc);
     Sync.baseVersion=r.data.version;
   } else {
     Sync.baseVersion=r.data.version||1;
   }
-  Sync.baseDoc=_clone(r.data.data||{players:[],games:[]});
+  Sync.baseDoc=_clone(joined.doc);
   syncSaveConfig(); syncSaveBase();
   Sync.dirty=true;                 // push our (merged) state to establish the shared doc
   syncSetStatus('syncing');
@@ -3821,7 +3853,40 @@ function accLoginUrl(){
   return '/.auth/login/aad?post_login_redirect_uri='+encodeURIComponent(back);
 }
 function accSignIn(){ location.href=accLoginUrl(); }
-function accSignOut(){ location.href='/.auth/logout?post_logout_redirect_uri='+encodeURIComponent(location.pathname); }
+function accSignOut(){ try{ localStorage.removeItem(LS_EVER); }catch(e){} location.href='/.auth/logout?post_logout_redirect_uri='+encodeURIComponent(location.pathname); }
+
+/* ---------- Mandatory sign-in gate (Phase 1) ----------
+   Login is required. The user signs in once while online; afterwards the SWA auth
+   cookie + cached data let the app run fully offline. The gate blocks the app only
+   when the user is online and not signed in, or has never signed in on this device. */
+function authEverLoggedIn(){ try{ return localStorage.getItem(LS_EVER)==='1'; }catch(e){ return false; } }
+function authSetEver(){ try{ localStorage.setItem(LS_EVER,'1'); }catch(e){} }
+function updateAuthGate(){
+  var g=document.getElementById('lmAuthGate'); if(!g) return;
+  var a=Sync.account, online=syncOnline();
+  // Gate when not signed in AND (we're online to sign in, or we've never cached a session).
+  var mustGate = !a.loggedIn && (online || !authEverLoggedIn());
+  document.body.classList.toggle('lm-gated', mustGate);
+  g.classList.toggle('show', mustGate);
+  if(!mustGate) return;
+  var msg=document.getElementById('lmAuthGateMsg');
+  var btn=document.getElementById('lmAuthGateBtn');
+  var spin=document.getElementById('lmAuthGateSpin');
+  var checking = online && !a.checked;
+  if(checking){
+    if(msg) msg.textContent='Checking your sign-in…';
+    if(btn) btn.classList.add('hidden');
+    if(spin) spin.classList.remove('hidden');
+  } else if(!online){
+    if(msg) msg.textContent='You need to sign in once while online before using Lineup Manager offline. Connect to the internet, then sign in.';
+    if(btn){ btn.textContent='🔄 Retry'; btn.classList.remove('hidden'); btn.onclick=accCheckAuth; }
+    if(spin) spin.classList.add('hidden');
+  } else {
+    if(msg) msg.textContent='Sign in with your Microsoft account to manage your teams and games. You only need to do this once per device — after that the app works offline on the sideline.';
+    if(btn){ btn.textContent='🔐 Sign in with Microsoft'; btn.classList.remove('hidden'); btn.onclick=accSignIn; }
+    if(spin) spin.classList.add('hidden');
+  }
+}
 
 // Detect whether the user is signed in (via SWA) and load their teams.
 async function accCheckAuth(){
@@ -3832,7 +3897,7 @@ async function accCheckAuth(){
     var j=await res.json();
     var cp=j&&(j.clientPrincipal||j.ClientPrincipal||null);
     a.loggedIn=!!cp;
-    if(cp){ a.user={ uid:cp.userId, name:cp.userDetails||'', provider:cp.identityProvider||'aad' }; }
+    if(cp){ a.user={ uid:cp.userId, name:cp.userDetails||'', provider:cp.identityProvider||'aad' }; authSetEver(); }
   }catch(e){ a.loggedIn=false; }
   a.checked=true;
   if(a.loggedIn){ await accLoadTeams(); }
@@ -3890,22 +3955,26 @@ async function accOpenTeam(teamId, teamName, opts){
         return true;
       }
       syncStartPoll();
-      syncResolveConflict(r.data);         // both sides changed → keep-mine / take-theirs
+      var asmC=await syncAssembleDoc(r.data.data||{});
+      syncResolveConflict({data:asmC.doc, version:serverVer, gameVers:asmC.gameVers});   // both sides changed → merge
       return true;
     }
-    if(r.data.data) syncApply(r.data.data);
-    Sync.baseVersion=serverVer; Sync.baseDoc=_clone(r.data.data||{players:[],games:[]}); Sync.dirty=false; Sync.lastSyncAt=Date.now();
+    var asmS=await syncAssembleDoc(r.data.data||{});
+    syncApply(asmS.doc);
+    Sync.baseVersion=serverVer; Sync.baseDoc=_clone(asmS.doc); Sync.gameVers=asmS.gameVers; Sync.dirty=false; Sync.lastSyncAt=Date.now();
     syncSaveConfig(); syncSaveBase(); syncSetStatus('synced'); syncStartPoll();
     return true;
   }
+  var asmO=await syncAssembleDoc(r.data.data||{});
+  Sync.gameVers=asmO.gameVers||{};
   if(r.data.data){
     var doMerge = await uiConfirm({title:'Team has saved data', message:'This team already has saved data.\n\nMerge it with what’s on this device (recommended), or overwrite the team with only this device’s data?', confirmLabel:'Merge', cancelLabel:'Overwrite team'});
-    if(doMerge) syncMergeIn(r.data.data);
+    if(doMerge) syncMergeIn(asmO.doc);
     Sync.baseVersion=r.data.version;
   } else {
     Sync.baseVersion=r.data.version||1;
   }
-  Sync.baseDoc=_clone(r.data.data||{players:[],games:[]});
+  Sync.baseDoc=_clone(asmO.doc);
   syncSaveConfig(); syncSaveBase();
   Sync.dirty=true;                 // push our (merged) state up
   await syncPush();
@@ -4044,24 +4113,139 @@ function syncOnLocalChange(){
 }
 Sync.onLocalChange=syncOnLocalChange;
 
+// The team-level document sent to /team: everything except games, plus an ordered
+// gameOrder index. Games travel as their own /game entities (Phase 3 physical split).
+function _teamTransport(doc){
+  var d={ players:(doc&&doc.players||[]).map(_clone), currentGameId:(doc&&doc.currentGameId)||null };
+  if(doc && doc.seedVersion) d.seedVersion=doc.seedVersion;
+  d.gameOrder=(doc&&doc.games||[]).map(function(g){ return g&&g.id; }).filter(function(x){ return x!=null; });
+  return d;
+}
+
+// Assemble a full logical team doc ({players, games, currentGameId, seedVersion})
+// from a team-level `data` blob (which now carries only gameOrder) by fetching the
+// per-game entities. Games whose server version matches what we already synced are
+// reused from the ancestor snapshot instead of re-downloaded. Returns the doc plus
+// a fresh { gameId: version } map. If the server still embeds games (pre-migration
+// or an old cached client), those are trusted as-is.
+async function syncAssembleDoc(teamData){
+  var d=teamData||{};
+  var full={ players:(d.players||[]).map(_clone), games:[], currentGameId:d.currentGameId||null };
+  if(d.seedVersion) full.seedVersion=d.seedVersion;
+  var vers={};
+  if(Array.isArray(d.games) && d.games.length){ full.games=d.games.map(_clone); return {doc:full, gameVers:vers}; }
+  var order=Array.isArray(d.gameOrder)?d.gameOrder.slice():[];
+  var rg; try{ rg=await syncFetch('/games?teamId='+encodeURIComponent(Sync.teamId),{method:'GET',headers:syncHeaders()}); }catch(e){ rg={status:0}; }
+  var serverVers={}; if(rg && rg.status===200 && rg.data && Array.isArray(rg.data.games)){ rg.data.games.forEach(function(x){ serverVers[x.gameId]=x.version; }); }
+  var baseById={}; ((Sync.baseDoc&&Sync.baseDoc.games)||[]).forEach(function(g){ if(g&&g.id!=null) baseById[g.id]=g; });
+  var byId={}, ids=Object.keys(serverVers);
+  for(var i=0;i<ids.length;i++){
+    var gid=ids[i], ver=serverVers[gid]; vers[gid]=ver;
+    if(Sync.gameVers[gid]===ver && baseById[gid]){ byId[gid]=_clone(baseById[gid]); continue; }  // unchanged → reuse
+    var rgo; try{ rgo=await syncFetch('/game?teamId='+encodeURIComponent(Sync.teamId)+'&gameId='+encodeURIComponent(gid),{method:'GET',headers:syncHeaders()}); }catch(e){ rgo={status:0}; }
+    if(rgo && rgo.status===200 && rgo.data && rgo.data.game){ byId[gid]=rgo.data.game; vers[gid]=rgo.data.version||ver; }
+    else if(baseById[gid]){ byId[gid]=_clone(baseById[gid]); }   // fetch failed → keep our copy
+  }
+  var seen={};
+  order.forEach(function(gid){ if(byId[gid]){ full.games.push(byId[gid]); seen[gid]=1; } });
+  Object.keys(byId).forEach(function(gid){ if(!seen[gid]) full.games.push(byId[gid]); });
+  return {doc:full, gameVers:vers};
+}
+
+// Translate an error response from a /team, /games or /game call into a sync status.
+// Returns true if it was a genuine conflict (caller should merge + retry).
+function _syncHandleErr(r){
+  if(r.status===409) return true;
+  if(r.status===401){ syncSetStatus('error','Passcode no longer valid'); }
+  else if(r.status===403){ Sync.readOnly=true; Sync.role='viewer'; Sync.dirty=false; syncSetStatus('error',(r.data&&r.data.message)||'View-only — your changes won’t sync'); }
+  else if(r.status===404){ syncSetStatus('error','Team not found on server'); }
+  else if(r.status===0){ syncSetStatus('offline'); }
+  else { syncSetStatus('error',(r.data&&r.data.message)||('Server error '+r.status)); }
+  return false;
+}
+
+// Push local edits as separate entities: each changed game to /game, then the
+// team-level fields (players, currentGameId, gameOrder) to /team, then delete any
+// games removed locally. Optimistic concurrency is per-entity; on ANY 409 we abort
+// and signal the caller to pull+merge+retry the whole push. Returns:
+//   { conflict:true } | { ok:true, mine, teamVersion, gameVers } | { ok:false }
+async function _pushEntities(){
+  var mine=syncData();
+  var baseById={}; ((Sync.baseDoc&&Sync.baseDoc.games)||[]).forEach(function(g){ if(g&&g.id!=null) baseById[g.id]=g; });
+  var newVers=Object.assign({}, Sync.gameVers);
+  // 1) upsert each new/changed game
+  for(var i=0;i<mine.games.length;i++){
+    var g=mine.games[i]; if(!g||g.id==null) continue;
+    var bg=baseById[g.id];
+    if(bg && _deepEq(bg,g)) continue;
+    var baseVer=Sync.gameVers[g.id]||0;
+    var rg; try{ rg=await syncFetch('/game',{method:'PUT',headers:syncHeaders(),body:{teamId:Sync.teamId, gameId:g.id, game:g, baseVersion:baseVer}}); }catch(e){ rg={status:0}; }
+    if(rg.status===200){ newVers[g.id]=rg.data.version; }
+    else if(_syncHandleErr(rg)) return {conflict:true};
+    else return {ok:false};
+  }
+  // 2) team-level fields (skip the write when nothing team-level changed)
+  var teamDoc=_teamTransport(mine);
+  var teamVersion=Sync.baseVersion;
+  var baseTeam=Sync.baseDoc?_teamTransport(Sync.baseDoc):null;
+  if(!baseTeam || !_deepEq(teamDoc, baseTeam)){
+    var rt; try{ rt=await syncFetch('/team',{method:'PUT',headers:syncHeaders(),body:{teamId:Sync.teamId, data:teamDoc, baseVersion:Sync.baseVersion}}); }catch(e){ rt={status:0}; }
+    if(rt.status===200){ teamVersion=rt.data.version; }
+    else if(_syncHandleErr(rt)) return {conflict:true};
+    else return {ok:false};
+  }
+  // 3) delete games that no longer exist locally
+  var mineIds={}; mine.games.forEach(function(g){ if(g&&g.id!=null) mineIds[g.id]=1; });
+  var delIds=Object.keys(baseById).filter(function(id){ return !mineIds[id]; });
+  for(var j=0;j<delIds.length;j++){
+    var did=delIds[j];
+    try{ await syncFetch('/game',{method:'DELETE',headers:syncHeaders(),body:{teamId:Sync.teamId, gameId:did}}); }catch(e){}
+    delete newVers[did];
+  }
+  Object.keys(newVers).forEach(function(id){ if(!mineIds[id]) delete newVers[id]; });
+  return {ok:true, mine:_clone(mine), teamVersion:teamVersion, gameVers:newVers};
+}
+
 async function syncPush(){
   if(!Sync.connected || Sync.busy || Sync.readOnly) return;
   if(!syncOnline()){ syncSetStatus('offline'); return; }
   Sync.busy=true; if(Sync.status!=='conflict') syncSetStatus('syncing');
   try{
-    var mine=syncData();
-    var r=await syncFetch('/team',{method:'PUT',headers:syncHeaders(),body:{teamId:Sync.teamId, data:mine, baseVersion:Sync.baseVersion}});
-    if(r.status===200){ Sync.baseVersion=r.data.version; Sync.baseDoc=mine; Sync.dirty=false; Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSaveBase(); syncSetStatus('synced'); }
-    else if(r.status===409){ Sync.busy=false; return syncResolveConflict(r.data); }
-    else if(r.status===401){ syncSetStatus('error','Passcode no longer valid'); }
-    else if(r.status===403){ // view-only role — accept server truth, stop pushing local edits
-      Sync.readOnly=true; Sync.role='viewer'; Sync.dirty=false;
-      syncSetStatus('error',(r.data&&r.data.message)||'View-only — your changes won’t sync'); }
-    else if(r.status===404){ // team blob missing (deleted) — re-establish by pushing as new base
-      syncSetStatus('error','Team not found on server'); }
-    else { syncSetStatus('error',(r.data&&r.data.message)||('Server error '+r.status)); }
+    var res=await _pushEntities();
+    if(res.conflict){ Sync.busy=false; return _pushAfterConflict(); }
+    if(res.ok){
+      Sync.baseVersion=res.teamVersion; Sync.baseDoc=res.mine; Sync.gameVers=res.gameVers;
+      Sync.dirty=false; Sync._retry=0; Sync.lastSyncAt=Date.now();
+      syncSaveConfig(); syncSaveBase(); syncSetStatus('synced');
+    }
   }catch(e){ syncSetStatus('offline'); }
   finally{ Sync.busy=false; }
+}
+
+// A per-entity write hit 409. Pull the latest full server doc, 3-way merge, and
+// retry the whole push. Bounded so a pathological ping-pong can't spin forever.
+async function _pushAfterConflict(){
+  Sync._retry=(Sync._retry||0)+1;
+  if(Sync._retry>4){ Sync._retry=0; syncSetStatus('error','Sync kept conflicting — will retry on the next poll'); return; }
+  var latest;
+  try{ latest=await _fetchServerDoc(); }catch(e){ syncSetStatus('offline'); return; }
+  if(!latest || !latest.ok) return;   // status already set
+  return syncResolveConflict({data:latest.doc, version:latest.version, gameVers:latest.gameVers});
+}
+
+// GET the team-level doc and assemble the full server doc (with games). Returns
+// { ok, doc, version, gameVers } or { ok:false } with a status already set.
+async function _fetchServerDoc(){
+  var r; try{ r=await syncFetch('/team?teamId='+encodeURIComponent(Sync.teamId),{method:'GET',headers:syncHeaders()}); }catch(e){ r={status:0}; }
+  if(r.status!==200){
+    if(r.status===401) syncSetStatus('error','Wrong passcode');
+    else if(r.status===404) syncSetStatus('error','Team not found');
+    else if(r.status===0) syncSetStatus('offline');
+    else syncSetStatus('error','Server error '+r.status);
+    return {ok:false};
+  }
+  var a=await syncAssembleDoc(r.data.data||{});
+  return {ok:true, doc:a.doc, version:r.data.version||1, gameVers:a.gameVers};
 }
 
 async function syncPull(){
@@ -4069,45 +4253,43 @@ async function syncPull(){
   if(!syncOnline()){ syncSetStatus('offline'); return; }
   Sync.busy=true;
   try{
-    var r=await syncFetch('/team?teamId='+encodeURIComponent(Sync.teamId),{method:'GET',headers:syncHeaders()});
-    if(r.status===200){
-      if(r.data.version===Sync.baseVersion){
-        if(Sync.status==='offline'||Sync.status==='syncing') syncSetStatus(Sync.dirty?'syncing':'synced');
-        Sync.busy=false; if(Sync.dirty){ return syncPush(); } return;
-      }
-      // Server advanced.
-      if(Sync.dirty){ Sync.busy=false; return syncResolveConflict(r.data); }   // local + server both changed → merge
-      syncApply(r.data.data); Sync.baseVersion=r.data.version; Sync.baseDoc=_clone(r.data.data||{}); Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSaveBase(); syncSetStatus('synced');
-    } else if(r.status===401){ syncSetStatus('error','Wrong passcode'); }
-    else if(r.status===404){ syncSetStatus('error','Team not found'); }
-    else { syncSetStatus('error','Server error '+r.status); }
+    var latest=await _fetchServerDoc();
+    if(!latest.ok){ Sync.busy=false; return; }
+    var serverChanged = (latest.version!==Sync.baseVersion) || !_deepEq(latest.gameVers, Sync.gameVers);
+    if(!serverChanged){
+      if(Sync.status==='offline'||Sync.status==='syncing') syncSetStatus(Sync.dirty?'syncing':'synced');
+      Sync.busy=false; if(Sync.dirty){ return syncPush(); } return;
+    }
+    if(Sync.dirty){ Sync.busy=false; return syncResolveConflict({data:latest.doc, version:latest.version, gameVers:latest.gameVers}); }
+    syncApply(latest.doc);
+    Sync.baseVersion=latest.version; Sync.baseDoc=_clone(latest.doc); Sync.gameVers=latest.gameVers;
+    Sync.lastSyncAt=Date.now(); syncSaveConfig(); syncSaveBase(); syncSetStatus('synced');
   }catch(e){ syncSetStatus('offline'); }
   finally{ Sync.busy=false; }
 }
 
-// Both this device and the server changed since our last sync. Instead of the old
-// keep-mine / take-theirs prompt (which discarded one side), do a structural
-// 3-way merge so edits to different players/games/settings all survive. Only a
-// genuine same-field clash resolves to the server value, and every device
-// converges on the same result.
+// Both this device and the server changed since our last sync. Do a structural
+// 3-way merge so edits to different players/games/settings all survive, then push
+// the merged result (which re-merges again if it races). serverPayload carries the
+// already-assembled full server doc plus its per-game versions.
 function syncResolveConflict(serverPayload){
   var theirs=(serverPayload && serverPayload.data) || {};
+  var gv=(serverPayload && serverPayload.gameVers) || {};
   var base=Sync.baseDoc;
   if(!base){
-    // No ancestor snapshot (legacy connection made before this feature): fall back
-    // to a union merge that adds anything missing rather than clobbering local edits.
+    // No ancestor snapshot (legacy connection): union-merge so nothing is clobbered.
     syncMergeIn(theirs);
-    Sync.baseVersion=serverPayload.version; Sync.baseDoc=_clone(theirs); Sync.dirty=true;
+    Sync.baseVersion=serverPayload.version; Sync.baseDoc=_clone(theirs); Sync.gameVers=gv; Sync.dirty=true;
     syncSaveConfig(); syncSaveBase(); syncSetStatus('syncing'); toast('Merged another coach’s changes');
     return syncPush();
   }
   var merged=mergeTeamDocs(base, syncData(), theirs);
   syncApply(merged);
   Sync.baseVersion=serverPayload.version;   // rebase onto the server version we merged against
-  Sync.baseDoc=_clone(theirs);
+  Sync.baseDoc=_clone(theirs); Sync.gameVers=gv;
   Sync.dirty=true; syncSaveConfig(); syncSaveBase();
   syncSetStatus('syncing'); toast('Merged another coach’s changes');
-  return syncPush();                         // push the merged result up (re-merges again if it races)
+  return syncPush();
 }
 
 // Adaptive polling: check often right after any local or remote activity, and when
@@ -4156,7 +4338,49 @@ function autoOpenPreferredTeam(preferredId){
            : (teams.length===1 ? teams[0].id : null);
   if(!want) return;
   var t=teams.filter(function(x){ return x.id===want; })[0];
-  accOpenTeam(want, t? t.name : '', { silent: (want===preferredId) });
+  return accOpenTeam(want, t? t.name : '', { silent: (want===preferredId) });
+}
+
+/* ---------- Phase 5: first-login local → account migration ----------
+ * A signed-in owner who has local roster/games but no cloud team yet is offered a
+ * one-time migration: create their own account team seeded from this device's data
+ * (games are split into per-game docs by the normal entity push), then retire any
+ * legacy passcode config so boot never reconnects via passcode again. Users who
+ * already have cloud teams are left to pick one — we never auto-create a duplicate.
+ */
+function localHasData(){
+  return (state.players && state.players.length>0) || (state.games && state.games.length>0);
+}
+function migrationDone(){ try{ return localStorage.getItem(LS_MIGRATED)==='1'; }catch(e){ return false; } }
+function markMigrated(){ try{ localStorage.setItem(LS_MIGRATED,'1'); }catch(e){} }
+function readLegacyPasscodeConfig(){
+  try{ var raw=localStorage.getItem(LS_SYNC); if(!raw) return null; var c=JSON.parse(raw); return (c && c.mode!=='account') ? c : null; }
+  catch(e){ return null; }
+}
+function retireLegacyPasscode(){
+  // Drop any legacy passcode connection config so boot never tries to reconnect via
+  // passcode. Account config is written separately by accOpenTeam/syncSaveConfig.
+  if(readLegacyPasscodeConfig()){ try{ localStorage.removeItem(LS_SYNC); }catch(e){} }
+}
+async function maybeMigrateLocalToAccount(){
+  if(!Sync.account.loggedIn || Sync.connected) return false;
+  if(migrationDone()) return false;
+  if((Sync.account.teams||[]).length>0) return false;   // already has cloud teams — let them choose
+  if(!localHasData()){ markMigrated(); retireLegacyPasscode(); return false; }
+  var legacy=readLegacyPasscodeConfig();
+  var suggested=(legacy && (legacy.teamName||legacy.teamId)) || 'My Team';
+  markMigrated();                                        // "prompt once": don't nag on later logins
+  var ok=await uiConfirm({
+    title:'Save to your account?',
+    message:'Save your existing roster and games to your Microsoft account so they sync across your devices? This creates your own team from what’s on this device.',
+    confirmLabel:'Save to account', cancelLabel:'Not now' });
+  if(!ok){ retireLegacyPasscode(); return false; }
+  var name=await uiPrompt({ title:'Name your team', message:'Give your team a name — you can change it later.', value:suggested, placeholder:'e.g. Thunder U13', confirmLabel:'Create' });
+  if(name===null){ retireLegacyPasscode(); return false; }
+  name=(name||'').trim()||'My Team';
+  await accCreateTeam(name);                             // create + open + push local data up as entities
+  if(Sync.connected && Sync.mode==='account'){ retireLegacyPasscode(); return true; }
+  return false;
 }
 
 function initSync(){
@@ -4180,8 +4404,8 @@ function initSync(){
   var ib=document.getElementById('syncInviteBtn'); if(ib) ib.onclick=accInvite;
   var lv=document.getElementById('syncLeaveBtn'); if(lv) lv.onclick=accLeaveTeam;
   var dt=document.getElementById('syncDeleteTeamBtn'); if(dt) dt.onclick=accDeleteTeam;
-  window.addEventListener('online', function(){ if(Sync.connected) syncPullNow(); });
-  window.addEventListener('offline', function(){ if(Sync.connected) syncSetStatus('offline'); });
+  window.addEventListener('online', function(){ if(!Sync.account.loggedIn){ accCheckAuth(); } else { updateAuthGate(); } if(Sync.connected) syncPullNow(); });
+  window.addEventListener('offline', function(){ updateAuthGate(); if(Sync.connected) syncSetStatus('offline'); });
   // See other coaches' edits the moment you return to the app.
   document.addEventListener('visibilitychange', function(){ if(!document.hidden) syncPullNow(); });
   window.addEventListener('focus', function(){ syncPullNow(); });
@@ -4209,7 +4433,8 @@ function initSync(){
     }
     var handledInvite = await accAcceptFromUrl();
     if(!handledInvite && Sync.account.loggedIn && !Sync.connected){
-      autoOpenPreferredTeam(preferredAccountTeam);
+      await autoOpenPreferredTeam(preferredAccountTeam);
+      if(!Sync.connected) await maybeMigrateLocalToAccount();
     }
   });
   // keep the "x ago" label fresh
@@ -4294,9 +4519,12 @@ window.__LM__ = {
   loadSharedCode:loadSharedCode, buildPrintView:buildPrintView,
   parseImportText:parseImportText, currentGame:currentGame, save:save,
   findPlayerByName:findPlayerByName, findPlayerMatch:findPlayerMatch, reconcilePlayers:reconcilePlayers, importSharedRoster:importSharedRoster, remapGameIds:remapGameIds,
+  uid:uid, isStrongId:isStrongId, migrateIds:migrateIds,
   Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase, syncSaveConfig:syncSaveConfig, syncLoadConfig:syncLoadConfig,
+  syncData:syncData, syncApply:syncApply, syncAssembleDoc:syncAssembleDoc, syncResolveConflict:syncResolveConflict, teamTransport:_teamTransport,
   merge3:merge3, mergeById:mergeById, mergeTeamDocs:mergeTeamDocs,
-  accCheckAuth:accCheckAuth, accLoadTeams:accLoadTeams, accCreateTeam:accCreateTeam, accOpenTeam:accOpenTeam, accInvite:accInvite
+  accCheckAuth:accCheckAuth, accLoadTeams:accLoadTeams, accCreateTeam:accCreateTeam, accOpenTeam:accOpenTeam, accInvite:accInvite,
+  maybeMigrateLocalToAccount:maybeMigrateLocalToAccount, localHasData:localHasData, migrationDone:migrationDone, readLegacyPasscodeConfig:readLegacyPasscodeConfig
 };
 </script>
 </body>

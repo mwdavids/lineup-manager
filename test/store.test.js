@@ -32,6 +32,18 @@ test('genTeamId always produces a valid, normalizable team id', () => {
   }
 });
 
+test('normalizeGameId: accepts blob-safe game ids, rejects the rest', () => {
+  assert.equal(store.normalizeGameId('g_1a2b3c'), 'g_1a2b3c');
+  assert.equal(store.normalizeGameId('  g_trim  '), 'g_trim', 'trims surrounding space');
+  assert.equal(store.normalizeGameId('g_' + 'a'.repeat(60)), 'g_' + 'a'.repeat(60));
+  assert.equal(store.normalizeGameId('a/b'), null, 'no path separators');
+  assert.equal(store.normalizeGameId('a.b'), null, 'no dots');
+  assert.equal(store.normalizeGameId('x'), null, 'too short');
+  assert.equal(store.normalizeGameId('_lead'), null, 'must start alphanumeric');
+  assert.equal(store.normalizeGameId('x'.repeat(200)), null, 'too long');
+  assert.equal(store.normalizeGameId(42), null, 'non-string');
+});
+
 test('hashPass + safeEqualHex: deterministic hash, timing-safe compare', () => {
   const salt = store.newSalt();
   const h1 = store.hashPass('secret', salt);
