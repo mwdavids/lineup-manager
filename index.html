@@ -811,6 +811,35 @@ function uid(p){
 // Legacy ids were prefix + Math.random().toString(36).slice(2,9) — no '_' or '-'.
 // Every id minted by uid() above contains one, so this cleanly tells them apart.
 function isStrongId(id){ return typeof id==='string' && /[-_]/.test(id); }
+// Deterministic id for a seeded roster player, derived from its (unique) seed name so
+// the SAME player converges to the SAME id on every device. This lets the id-based
+// 3-way merge match seeded players across devices instead of falling back to name —
+// the fallback silently kept the local copy and clobbered another device's edits.
+function seedId(name){
+  var slug=(name||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  return 'pseed-'+(slug||hashStr('seed:'+name).toString(36));
+}
+var SEED_BY_NAME={}; SEED.forEach(function(s){ SEED_BY_NAME[s[0]]={foot:s[1], positions:s[2].slice()}; });
+// True when a player still carries its untouched seed foot + positions (never edited).
+function isSeedDefault(p){
+  if(!p) return false;
+  var d=SEED_BY_NAME[p.name]; if(!d) return false;
+  if((p.foot||'')!==(d.foot||'')) return false;
+  var a=(p.positions||[]), b=d.positions;
+  if(a.length!==b.length) return false;
+  for(var i=0;i<a.length;i++){ if(a[i]!==b[i]) return false; }
+  return true;
+}
+// True when local state is the pristine default seed with no user edits (no games and
+// every player still at its seed default). Such a device has nothing worth merging, so
+// on connect we take the team's server copy wholesale instead of pushing defaults up.
+function isPristineSeed(){
+  if(state.games && state.games.length) return false;
+  var ps=state.players||[];
+  if(ps.length!==SEED.length) return false;
+  for(var i=0;i<ps.length;i++){ if(!isSeedDefault(ps[i])) return false; }
+  return true;
+}
 // One-time, idempotent upgrade of weak player/game ids to strong UUID-based ones.
 // Remaps every intra-game reference (availability, plan slots, pins, edits) and
 // currentGameId so saved games keep pointing at the right players. Whole-state sync
@@ -822,6 +851,24 @@ function migrateIds(){
   });
   (state.games||[]).forEach(function(g){
     if(g && g.id && !isStrongId(g.id)){ var ng=uid('g'); map[g.id]=ng; g.id=ng; }
+  });
+  if(!Object.keys(map).length) return 0;
+  (state.games||[]).forEach(function(g){ if(g) remapGameIds(g, map); });
+  if(state.currentGameId && map[state.currentGameId]) state.currentGameId=map[state.currentGameId];
+  return Object.keys(map).length;
+}
+// One-time heal: re-key seeded players that were minted with a per-device random id
+// (old behavior) to the deterministic seedId, so every device converges and the
+// id-based merge stops falling back to name-matching (which silently kept local
+// defaults over another device's real position edits). Remaps intra-game references
+// and currentGameId so saved games keep pointing at the right players. No-op once healed.
+function migrateSeedIds(){
+  var map={};
+  (state.players||[]).forEach(function(p){
+    if(!p || !p.name || !SEED_BY_NAME[p.name]) return;
+    var want=seedId(p.name);
+    if(p.id===want || byId(want)) return;   // already healed, or target id is taken
+    map[p.id]=want; p.id=want;
   });
   if(!Object.keys(map).length) return 0;
   (state.games||[]).forEach(function(g){ if(g) remapGameIds(g, map); });
@@ -901,12 +948,13 @@ function load(){
   if(!raw || !state.players || !state.players.length){
     state = { players:[], games:[], currentGameId:null, seedVersion:SEED_VERSION };
     SEED.forEach(function(s){
-      state.players.push({ id:uid('p'), name:s[0], foot:s[1], positions:s[2].slice() });
+      state.players.push({ id:seedId(s[0]), name:s[0], foot:s[1], positions:s[2].slice() });
     });
     save();
   } else {
     migrateRoster();
     migrateIds();
+    migrateSeedIds();
     save();
   }
   if(!state.games) state.games=[];
@@ -3174,7 +3222,16 @@ function reconcilePlayers(sharedPlayers){
   var map={};
   (sharedPlayers||[]).forEach(function(p){
     var match=findPlayerMatch(p);
-    if(match){ map[p.id]=match.id; }
+    if(match){
+      // Our local copy matched by name but is still an untouched seed default, while
+      // the incoming team copy carries real (edited) attributes — adopt them so a
+      // pristine device's defaults never win over another device's deliberate edits.
+      if(isSeedDefault(match) && !isSeedDefault(p)){
+        match.foot=p.foot;
+        match.positions=(p.positions||[]).slice();
+      }
+      map[p.id]=match.id;
+    }
     else { var np=_clone(p); state.players.push(np); map[p.id]=np.id; }
   });
   return map;
@@ -3810,6 +3867,16 @@ async function syncConnect(teamId, passcode, endpoint){
   Sync.teamId=teamId; Sync.passcode=passcode; Sync.connected=true; Sync.readOnly=false;
   var joined=await syncAssembleDoc(r.data.data||{});
   Sync.gameVers=joined.gameVers||{};
+  if(r.data.data && isPristineSeed()){
+    // This device only holds the untouched default seed — take the team's copy
+    // wholesale rather than pushing defaults over real data.
+    syncApply(joined.doc);
+    Sync.baseVersion=r.data.version; Sync.baseDoc=_clone(joined.doc); Sync.gameVers=joined.gameVers;
+    Sync.dirty=false; Sync.lastSyncAt=Date.now();
+    syncSaveConfig(); syncSaveBase(); syncSetStatus('synced'); syncStartPoll();
+    toast('Team connected');
+    return true;
+  }
   if(r.data.data){
     // Team already has data — merge it into local, then push the union up.
     var doMerge = await uiConfirm({title:'Team has saved data', message:'This team already has saved data.\n\nMerge it with what’s on this device (recommended), or overwrite the team with only this device’s data?', confirmLabel:'Merge', cancelLabel:'Overwrite team'});
@@ -3948,6 +4015,14 @@ async function accOpenTeam(teamId, teamName, opts){
     // the server copy: flush them when we're strictly ahead, or resolve a real
     // conflict if the server also moved on.
     var serverVer = r.data.version||1;
+    if(r.data.data && isPristineSeed()){
+      // Only the untouched default seed here — take the team copy, don't push defaults.
+      var asmP=await syncAssembleDoc(r.data.data||{});
+      syncApply(asmP.doc);
+      Sync.baseVersion=serverVer; Sync.baseDoc=_clone(asmP.doc); Sync.gameVers=asmP.gameVers; Sync.dirty=false; Sync.lastSyncAt=Date.now();
+      syncSaveConfig(); syncSaveBase(); syncSetStatus('synced'); syncStartPoll();
+      return true;
+    }
     if(Sync.dirty){
       if(serverVer === Sync.baseVersion){
         Sync.baseVersion=serverVer; syncSaveConfig(); syncStartPoll();
@@ -3967,6 +4042,16 @@ async function accOpenTeam(teamId, teamName, opts){
   }
   var asmO=await syncAssembleDoc(r.data.data||{});
   Sync.gameVers=asmO.gameVers||{};
+  if(r.data.data && isPristineSeed()){
+    // This device only holds the untouched default seed — take the team's copy
+    // wholesale rather than pushing defaults over real data (no prompt needed).
+    syncApply(asmO.doc);
+    Sync.baseVersion=r.data.version; Sync.baseDoc=_clone(asmO.doc); Sync.gameVers=asmO.gameVers;
+    Sync.dirty=false; Sync.lastSyncAt=Date.now();
+    syncSaveConfig(); syncSaveBase(); syncSetStatus('synced'); syncStartPoll();
+    toast('Team “'+Sync.teamName+'” connected');
+    return true;
+  }
   if(r.data.data){
     var doMerge = await uiConfirm({title:'Team has saved data', message:'This team already has saved data.\n\nMerge it with what’s on this device (recommended), or overwrite the team with only this device’s data?', confirmLabel:'Merge', cancelLabel:'Overwrite team'});
     if(doMerge) syncMergeIn(asmO.doc);
@@ -4519,7 +4604,8 @@ window.__LM__ = {
   loadSharedCode:loadSharedCode, buildPrintView:buildPrintView,
   parseImportText:parseImportText, currentGame:currentGame, save:save,
   findPlayerByName:findPlayerByName, findPlayerMatch:findPlayerMatch, reconcilePlayers:reconcilePlayers, importSharedRoster:importSharedRoster, remapGameIds:remapGameIds,
-  uid:uid, isStrongId:isStrongId, migrateIds:migrateIds,
+  uid:uid, isStrongId:isStrongId, migrateIds:migrateIds, migrateSeedIds:migrateSeedIds,
+  seedId:seedId, isSeedDefault:isSeedDefault, isPristineSeed:isPristineSeed,
   Sync:Sync, syncConnect:syncConnect, syncDisconnect:syncDisconnect, syncPush:syncPush, syncPull:syncPull, syncApiBase:syncApiBase, syncSaveConfig:syncSaveConfig, syncLoadConfig:syncLoadConfig,
   syncData:syncData, syncApply:syncApply, syncAssembleDoc:syncAssembleDoc, syncResolveConflict:syncResolveConflict, teamTransport:_teamTransport,
   merge3:merge3, mergeById:mergeById, mergeTeamDocs:mergeTeamDocs,
