@@ -79,6 +79,35 @@ test('buildSegments: 70-min / 3-sub game → 4 equal-ish windows, two 35-min hal
   assert.equal(h1, 35);
 });
 
+test('windows within a half are equal at half-minute granularity (17.5 not 18/17)', () => {
+  // 35' half / 2 windows → 17.5 + 17.5, not the old 18 + 17. Equal windows let a
+  // player alternate on/off and still earn exactly half the game.
+  const game = seedGame({ minutes: 35, subs: 3 });
+  const plan = LM.generatePlan(game);
+  const h0 = Array.from(plan.segments.filter((s) => s.period === 0), (s) => s.dur);
+  const h1 = Array.from(plan.segments.filter((s) => s.period === 1), (s) => s.dur);
+  [h0, h1].forEach((durs) => {
+    assert.deepEqual(durs, [17.5, 17.5], 'each half splits into two equal 17.5 windows');
+  });
+  // Every window duration is a clean half-minute → a whole number of seconds.
+  plan.segments.forEach((s) => {
+    assert.equal((s.dur * 2) % 1, 0, `window ${s.dur} is a half-minute multiple`);
+    assert.equal((s.dur * 60) % 1, 0, `window ${s.dur} is a whole number of seconds`);
+  });
+});
+
+test('odd window counts split at half-minute granularity and still sum exactly', () => {
+  // 35' half / 3 windows → 12 + 11.5 + 11.5 = 35 (no float drift, all half-minutes).
+  const game = seedGame({ minutes: 35, subs: 5 });
+  const plan = LM.generatePlan(game);
+  const h0 = Array.from(plan.segments.filter((s) => s.period === 0), (s) => s.dur);
+  assert.deepEqual(h0, [12, 11.5, 11.5]);
+  const total = plan.segments.reduce((a, s) => a + s.dur, 0);
+  assert.equal(total, 70, 'windows sum to the full game exactly');
+  const spread = Math.max(...h0) - Math.min(...h0);
+  assert.ok(spread <= 0.5, 'windows within a half differ by at most 0.5 minute');
+});
+
 test('every slot in every window is filled when the full roster is available', () => {
   const game = seedGame();
   const plan = LM.generatePlan(game);
@@ -138,13 +167,45 @@ test('GK relief: two keepers each keep one full half and play their other half o
   assert.equal(coveredHalves.size, 2, 'the two keepers cover opposite halves');
 });
 
-test('half-time floor: every available player gets at least half the game', () => {
+test('half-time floor: every available player gets at least half the windows', () => {
   const game = seedGame();
   game.plan = LM.generatePlan(game);
   const stat = LM.computeStats(game);
-  const halfGame = (game.periods * game.minutes) / 2;
+  // The floor is half the GAME, but play is quantized into windows that can be
+  // unequal (a 35-min half splits into 18+17), so "half the game" means half the
+  // windows — the shortest such combination of minutes, not a strict minutes count.
+  const durs = game.plan.segments.map((s) => s.dur).sort((a, b) => a - b);
+  const guarWins = Math.round(game.plan.segments.length * 0.5);
+  const floor = durs.slice(0, guarWins).reduce((a, d) => a + d, 0);
+  const nWindows = game.plan.segments.length;
   availablePlayers(game).forEach((p) => {
-    assert.ok(stat[p.id].min >= halfGame, `${p.name} plays ${stat[p.id].min} (< ${halfGame})`);
+    assert.ok(stat[p.id].min >= floor, `${p.name} plays ${stat[p.id].min} (< ${floor})`);
+    assert.ok(stat[p.id].stints >= guarWins, `${p.name} plays ${stat[p.id].stints} windows (< ${guarWins})`);
+    assert.ok(nWindows === 4, 'sanity: seeded game has 4 windows');
+  });
+});
+
+test('no clustering: field players alternate windows instead of playing half-blocks', () => {
+  const game = seedGame();
+  game.plan = LM.generatePlan(game);
+  const stat = LM.computeStats(game);
+  // Keepers intentionally play their whole off-half outfield; exclude them.
+  const keepers = new Set(
+    Object.keys(stat).filter((id) => stat[id].gk > 0)
+  );
+  // A 2-window player should get ONE window per half (alternating), never both
+  // windows of the same half back-to-back. Players who must take a third window
+  // (scarce/solo positions) are allowed to double up once.
+  availablePlayers(game).forEach((p) => {
+    if (keepers.has(p.id)) return;
+    if (stat[p.id].stints !== 2) return; // only the clean 2-window case
+    const on = game.plan.segments.map((seg) =>
+      SLOT_KEYS.some((k) => seg.slots[k] === p.id)
+    );
+    const h1Block = on[0] && on[1];
+    const h2Block = on[2] && on[3];
+    assert.ok(!h1Block && !h2Block,
+      `${p.name} plays a back-to-back half-block (${on.map((b) => (b ? 'X' : '-')).join('')})`);
   });
 });
 

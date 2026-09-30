@@ -34,8 +34,10 @@ an existing roster maps cleanly without relabelling anyone.
 - **Strength balancing across windows** — an optional skill rating (Developing / Solid /
   Strong) lets the planner spread strong and developing players so no single window is very
   weak, balancing **each line (defense, midfield, attack) independently** — without changing
-  anyone's total minutes. It also enforces **rest fairness**, avoiding two benched windows in
-  a row wherever possible, and flags any window weaker than usual.
+  anyone's total minutes. It also enforces **rotation freshness**, spreading each player's
+  windows across the match — avoiding two benched *or* two played windows in a row wherever
+  possible, so rotations alternate (A→B→A→B) instead of clustering into half-blocks — and
+  flags any window weaker than usual.
 - **In-place repair on last-minute changes** — a "Repair plan" banner appears when a planned
   player goes out (or comes back), and fixes only what's needed instead of reshuffling the
   whole lineup.
@@ -246,6 +248,12 @@ eligible players, so the result is deterministic and reproducible. Priority orde
    secondary over tertiary.
 2. **Equal field time:** minimizes the spread of total minutes across *available* players; each
    game stands alone (no carryover). Rolling windows are what make this work with long halves.
+   Each player is guaranteed at least **half the windows** (their "half" of the game). Windows
+   within a half are split **equally at half-minute granularity** — a 35′ half becomes **17.5′ +
+   17.5′** (not 18′ + 17′), and a three-window half becomes **12′ + 11.5′ + 11.5′**. Equal
+   windows mean a player who **alternates** on and off earns exactly half the game, so the planner
+   never has to cluster anyone into a back-to-back half-block to satisfy the floor. (Durations
+   land on clean half-minutes — and thus whole seconds — so the live timer stays precise.)
 3. **GK relief (whole-half blocks):** with two eligible keepers available, each plays **one
    contiguous half in goal and their *entire* other half outfield** — yielding a clean **~50/50
    GK split** and **≈ full-game minutes for both keepers**. The preference is **soft** and ranks

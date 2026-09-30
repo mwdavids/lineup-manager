@@ -1267,8 +1267,15 @@ function buildSegments(game){
   var base=Math.floor(total/P), extra=total-base*P;
   for(var p=0;p<P;p++){
     var w=Math.max(1, base+(p<extra?1:0));     // earlier halves get any extra window
-    var bd=Math.floor(M/w), rem=M-bd*w;
-    for(var i=0;i<w;i++){ segs.push({period:p, dur: bd+(i<rem?1:0)}); }
+    // Split the half into EQUAL windows at HALF-MINUTE granularity, so a 35' half
+    // becomes 17.5 + 17.5 rather than 18 + 17. Working in half-minute units keeps the
+    // windows within 0.5' of each other, makes them summing to the half EXACTLY (no
+    // float drift), and keeps every boundary on a whole second (x.5' × 60 = integer
+    // seconds) so the live timer stays precise. Equal windows also mean a player who
+    // alternates on/off earns exactly half the minutes — no rounding gap to force
+    // anyone into a back-to-back block.
+    var halves=Math.round(M*2), hd=Math.floor(halves/w), hrem=halves-hd*w;
+    for(var i=0;i<w;i++){ segs.push({period:p, dur: (hd+(i<hrem?1:0))/2 }); }
   }
   return segs;
 }
@@ -1369,7 +1376,18 @@ function generatePlan(game, opts){
   // Suffix sum of window minutes: suffixMin[i] = minutes available from segment i to end.
   var suffixMin=new Array(segMeta.length+1).fill(0);
   for(var qi=segMeta.length-1; qi>=0; qi--) suffixMin[qi]=suffixMin[qi+1]+segMeta[qi].dur;
-  var halfThreshold=(game.periods*game.minutes)*minPlayFrac;   // minimum guaranteed playing time
+  // Everyone-plays-a-half floor, measured in MINUTES but capped at what the fair
+  // share of WINDOWS can actually deliver. Windows can be unequal — a 35-min half
+  // splits into 18+17 — so demanding EXACTLY half the minutes (35) is stricter than
+  // "half the windows": a player who takes the two short windows lands on 34 and
+  // would be hard-forced to cluster onto a long window, recreating half-blocks and
+  // blocking clean A→B→A→B alternation. Relax the floor to the minutes delivered by
+  // the fair share of windows (the shortest such combination). For equal windows
+  // this equals minPlayFrac*total exactly, so nothing changes there.
+  var _winDurs=segMeta.map(function(s){ return s.dur; }).sort(function(a,b){ return a-b; });
+  var _guarWins=Math.round(segMeta.length*minPlayFrac);
+  var _winFloor=0; for(var _wi=0; _wi<_guarWins; _wi++) _winFloor+=(_winDurs[_wi]||0);
+  var halfThreshold=Math.min((game.periods*game.minutes)*minPlayFrac, _winFloor);   // minimum guaranteed playing time
 
   // Position-scarcity nudge: reserve scarce slots for players who have no other
   // option. captiveCount[key] = how many available players can ONLY play that slot's
@@ -1430,20 +1448,28 @@ function generatePlan(game, opts){
   }
   var prev = fromSeg>0 ? segments[fromSeg-1].slots : null;
 
-  // PRIORITY 2 — rest fairness (no back-to-back bench). Track how many consecutive prior
-  // windows each player has sat, and pull them ON the longer they've been idle so the same
-  // kids don't sit two windows in a row. Seeded from any fixed windows (repair/keep-edits).
-  // Stays well below the half-guarantee / keeper pulls, so it never breaks those.
-  var benchStreak={};
-  avail.forEach(function(pl){ benchStreak[pl.id]=0; });
+  // PRIORITY 2 — freshness (spread minutes across the match, no clustering into
+  // half-blocks). Track, per player, how many consecutive prior windows they have
+  // SAT (benchStreak) and how many they have PLAYED (playStreak). Pull a long-benched
+  // player ON and push a just-played player OFF, so the same kids don't sit — or play —
+  // two windows in a row and rotations alternate (A→B→A→B) instead of blocking
+  // (A→A→B→B). Seeded from any fixed windows (repair/keep-edits). Both stay well below
+  // the half-guarantee / keeper pulls, so they only break otherwise-equal ties.
+  var benchStreak={}, playStreak={};
+  avail.forEach(function(pl){ benchStreak[pl.id]=0; playStreak[pl.id]=0; });
   for(var bi=0; bi<fromSeg; bi++){
     var fseg=segments[bi], onf0={};
     if(fseg && fseg.slots){ SLOTS.forEach(function(s){ var pid=fseg.slots[s.key]; if(pid) onf0[pid]=true; }); }
-    avail.forEach(function(pl){ benchStreak[pl.id] = onf0[pl.id]? 0 : benchStreak[pl.id]+1; });
+    avail.forEach(function(pl){
+      if(onf0[pl.id]){ playStreak[pl.id]=playStreak[pl.id]+1; benchStreak[pl.id]=0; }
+      else { benchStreak[pl.id]=benchStreak[pl.id]+1; playStreak[pl.id]=0; }
+    });
   }
   function restPull(pl){
-    var k=benchStreak[pl.id]||0; if(k<=0) return 0;
-    return -Math.min(k,3)*50*freshW;       // sat 1 window -> -50, 2 -> -100, 3+ -> -150 (scaled by Freshness)
+    var k=benchStreak[pl.id]||0, j=playStreak[pl.id]||0, pull=0;
+    if(k>0) pull -= Math.min(k,3)*50*freshW;   // sat 1 window -> -50, 2 -> -100, 3+ -> -150: pull ON
+    if(j>0) pull += Math.min(j,3)*50*freshW;   // played 1 window -> +50, 2 -> +100, 3+ -> +150: rotate OFF
+    return pull;
   }
 
   for(var si=fromSeg; si<segMeta.length; si++){
@@ -1505,9 +1531,13 @@ function generatePlan(game, opts){
       else if(!pinnedSlotKeys[s.key]){ fldMin[pid]+=dur; }
     });
 
-    // update rest streaks for the NEXT window: on-field resets, benched increments
+    // update freshness streaks for the NEXT window: on-field resets bench / grows play,
+    // benched resets play / grows bench.
     var onNow={}; SLOTS.forEach(function(s){ var pid=assign[s.key]; if(pid) onNow[pid]=true; });
-    avail.forEach(function(pl){ benchStreak[pl.id] = onNow[pl.id]? 0 : benchStreak[pl.id]+1; });
+    avail.forEach(function(pl){
+      if(onNow[pl.id]){ playStreak[pl.id]=playStreak[pl.id]+1; benchStreak[pl.id]=0; }
+      else { benchStreak[pl.id]=benchStreak[pl.id]+1; playStreak[pl.id]=0; }
+    });
 
     segments[si]={period:period, dur:dur, slots:assign};
     prev=assign;
@@ -1539,10 +1569,12 @@ function cellCost(pl, slot, periodIndex, loadOf, prev, colIndex, prevSamePeriod,
     var prevSlotKey=null;
     for(var k in prev){ if(prev[k]===pl.id){ prevSlotKey=k; break; } }
     if(prevSlotKey){
-      if(prevSlotKey===slot.key) c -= 5*sW;              // stayed same position: good
-      // Only penalize a genuine within-period on-field move; moving a staying-on
-      // player at the half boundary is free (they reset during the break).
-      else if(prevSlotKey!=='GK' && prevSamePeriod) c += 8*sW;
+      // Positional continuity only matters WITHIN a half (no stoppage). Across the
+      // halftime break players reset, so neither the stay-bonus nor the move-penalty
+      // applies — otherwise rewarding a same-slot "stay" across the break quietly
+      // encourages the same kids to play both windows straddling halftime.
+      if(prevSlotKey===slot.key){ if(prevSamePeriod) c -= 5*sW; }   // stayed same position within the half: good
+      else if(prevSlotKey!=='GK' && prevSamePeriod) c += 8*sW;      // genuine within-period on-field move
     }
   }
   c += (colIndex||0)*0.001;             // deterministic tie-break
