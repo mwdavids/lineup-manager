@@ -172,6 +172,11 @@
   .pc-dot.on{background:var(--accent)} .pc-dot.off{background:var(--bad)}
   .pc-div{align-self:center;font-size:10px;font-weight:800;color:var(--muted);border-left:2px solid var(--line);padding-left:7px;margin-left:1px}
   /* Live */
+  .halfstep{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:4px}
+  .halfbtn{width:44px;height:44px;min-width:44px;border:1.5px solid var(--line);background:var(--panel);color:var(--ink);border-radius:50%;font-size:26px;line-height:1;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .halfbtn:active{background:var(--chip)}
+  .halfbtn:disabled{opacity:.35;cursor:default}
+  .halflabel{font-size:20px;font-weight:800;min-width:120px;text-align:center}
   .clock{font-variant-numeric:tabular-nums;font-weight:800;font-size:clamp(64px,18vw,150px);text-align:center;line-height:1;letter-spacing:2px;cursor:pointer}
   .clock.warn{color:var(--warn)} .clock.done{color:var(--bad)}
   .clockedit{color:var(--muted);font-weight:700;font-size:12px;text-align:center;margin-top:2px}
@@ -181,8 +186,11 @@
   .alarmbanner .adismiss{background:#fff;color:var(--bad);border:none;border-radius:10px;padding:12px 16px;font-weight:800;font-size:15px;min-height:var(--tap);cursor:pointer}
   .subcard{border:3px solid var(--warn);border-radius:16px;padding:14px;background:#fff7ec;margin-bottom:12px;animation:pulse 1s infinite}
   .repairbar{border:2px solid var(--warn);background:#fff7ec;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-weight:700;font-size:14px}
-  .starthint{color:var(--accent-d);font-weight:800;font-size:15px;text-align:center;margin-top:10px;padding:8px 10px;border:2px dashed var(--accent);border-radius:12px;animation:pulse 1.4s infinite}
   @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(201,120,31,.4)}50%{box-shadow:0 0 0 10px rgba(201,120,31,0)}}
+  .subgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:4px 0}
+  .subcell{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:#fff;display:flex;flex-direction:column;gap:4px}
+  .subcell .slot{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .subcell .ln{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700}
   .subrow{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;padding:6px 0;border-bottom:1px dashed var(--line);flex-wrap:wrap}
   .subrow:last-child{border-bottom:none}
   .off{color:var(--bad)} .on{color:var(--accent-d)}
@@ -651,9 +659,11 @@
   <!-- LIVE -->
   <section id="tab-live" class="tabview hidden">
     <div class="panel">
-      <div class="row" style="justify-content:space-between">
-        <h2 style="margin:0">Live — <span id="liveGame"></span></h2>
-        <span class="pill" id="livePeriodPill">Period 1</span>
+      <h2 style="margin:0">Live — <span id="liveGame"></span></h2>
+      <div class="halfstep">
+        <button class="halfbtn" id="prevBtn" aria-label="Previous half">‹</button>
+        <span class="halflabel" id="liveHalfLabel">Half 1 of 2</span>
+        <button class="halfbtn" id="nextBtn" aria-label="Next half">›</button>
       </div>
       <div class="clock" id="clock">00:00</div>
       <div class="clockedit" id="clockEditHint">tap the clock to set the time</div>
@@ -661,10 +671,7 @@
         <button class="btn" id="startBtn">▶ Start</button>
         <button class="btn sec" id="pauseBtn">⏸ Pause</button>
         <button class="btn sec" id="resetBtn">↺ Reset</button>
-        <button class="btn sec" id="prevBtn">⏮ Prev period</button>
-        <button class="btn" id="nextBtn">⏭ Next period</button>
       </div>
-      <div id="startHint" class="starthint" style="display:none">👆 Don’t forget — tap <b>Start</b> to run the clock</div>
     </div>
 
     <div id="subCardWrap"></div>
@@ -2560,11 +2567,20 @@ function currentLiveSeg(){
   return firstSegOfPeriod(g, currentLivePeriod());
 }
 
+function updateHalfStepper(g, pi){
+  var lbl=document.getElementById('liveHalfLabel');
+  var prev=document.getElementById('prevBtn'), next=document.getElementById('nextBtn');
+  var last = g? (g.periods-1) : 0;
+  if(lbl) lbl.textContent = g? (periodName(g,pi)+' of '+g.periods) : '—';
+  if(prev) prev.disabled = !g || pi<=0;
+  if(next) next.disabled = !g || pi>=last;
+}
+
 function renderLive(){
   var g=currentGame();
   document.getElementById('liveGame').textContent = g? (g.name||'Game') : '—';
   var pi=currentLivePeriod();
-  document.getElementById('livePeriodPill').textContent = g? (periodName(g,pi)+' / '+g.periods) : '—';
+  updateHalfStepper(g, pi);
   if(!g || !g.plan || !g.plan.segments){
     document.getElementById('liveField').innerHTML='<div class="muted">No plan. Generate one first.</div>';
     document.getElementById('liveMinutes').innerHTML='';
@@ -2652,16 +2668,21 @@ function renderSubCard(g, gi){
   var when = nextInfo? (periodName(g,nextInfo.period)+' '+nextInfo.startMin+"'") : '';
   var card=el('div', near?'subcard':'panel');
   card.appendChild(el('h2', null, near? ('⚠️ SUBS in '+toBoundary+'s') : ('Upcoming subs → '+when)));
+  var grid=el('div','subgrid');
   subs.forEach(function(c){
-    var r=el('div','subrow');
-    r.appendChild(el('span','pill',c.slot));
-    if(c.off){ r.appendChild(pchip(byId(c.off))); var o=el('span','off','OFF '+shortName(byId(c.off))); r.appendChild(o); }
-    r.appendChild(el('span','','→'));
-    if(c.on){ r.appendChild(pchip(byId(c.on))); var on=el('span','on','ON '+shortName(byId(c.on))); r.appendChild(on); }
-    if(!c.off) r.appendChild(el('span','muted','(new)'));
-    if(!c.on) r.appendChild(el('span','muted','(empty)'));
-    card.appendChild(r);
+    var cell=el('div','subcell');
+    cell.appendChild(el('div','slot',c.slot));
+    var offLn=el('div','ln off');
+    if(c.off){ offLn.appendChild(pchip(byId(c.off))); offLn.appendChild(el('span','','OFF '+shortName(byId(c.off)))); }
+    else { offLn.appendChild(el('span','muted','(new)')); }
+    cell.appendChild(offLn);
+    var onLn=el('div','ln on');
+    if(c.on){ onLn.appendChild(pchip(byId(c.on))); onLn.appendChild(el('span','','ON '+shortName(byId(c.on)))); }
+    else { onLn.appendChild(el('span','muted','(empty)')); }
+    cell.appendChild(onLn);
+    grid.appendChild(cell);
   });
+  card.appendChild(grid);
   var logged=subsLoggedFor(g, gi+1);
   var actions=el('div','subrow');
   if(logged){
@@ -2691,13 +2712,6 @@ function setClock(){
   c.textContent=(mm<10?'0':'')+mm+':'+(ss<10?'0':'')+ss;
   c.classList.toggle('warn', timer.remaining<=WARN_SECONDS && timer.remaining>0);
   c.classList.toggle('done', timer.remaining<=0);
-  updateStartHint();
-}
-function updateStartHint(){
-  var h=document.getElementById('startHint'); if(!h) return;
-  var g=currentGame();
-  var fresh = g && g.plan && g.plan.segments && g.minutes && !timer.running && timer.remaining===g.minutes*60;
-  h.style.display = fresh? 'block':'none';
 }
 /* Set the clock to a specific elapsed time within the current period. Keeps the
    wall-clock deadline, sub windows, and already-fired alerts consistent — used when
@@ -2813,7 +2827,6 @@ function startTimer(){
   timer.handle=setInterval(tick,1000);
   primeAudio();
   refreshWakeLock();
-  updateStartHint();
 }
 function pauseTimer(){
   if(timer.running) syncRemaining();
@@ -2821,7 +2834,6 @@ function pauseTimer(){
   if(timer.handle){ clearInterval(timer.handle); timer.handle=null; }
   timer.deadline=0;
   stopAlarm();
-  updateStartHint();
 }
 function resetTimer(){ pauseTimer(); initClock(); }
 
