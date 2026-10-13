@@ -19,13 +19,13 @@ const assert = require('node:assert/strict');
 const { loadApp } = require('./helpers/loadApp');
 
 const SEED = [
-  ['Eleanor C.', 'R', ['GK', 'RW', 'DM']], ['Nora D.', 'R', ['RB', 'CM']],
-  ['Mackenzie D.', 'R', ['CM', 'CB']], ['Teigan E.', 'R', ['CB', 'RB']],
+  ['Eleanor C.', 'R', ['GK', 'RW', 'DCM']], ['Nora D.', 'R', ['RB', 'AM']],
+  ['Mackenzie D.', 'R', ['AM', 'CB']], ['Teigan E.', 'R', ['CB', 'RB']],
   ['Finley G.', 'R', ['ST', 'CB']], ['Caroline G.', 'R', ['RW']],
   ['Haley H.', 'R', ['CB']], ['Isla K.', 'L', ['CB', 'LB']], ['Finn', 'R', ['RB']],
-  ['Violet M.', 'R', ['DM']], ['Emily M.', 'R', ['CM', 'CB']], ['Penelope T.', 'L', ['LW']],
-  ['Ayana B.', 'L', ['LW', 'CM', 'LB']], ['Genevieve E.', 'R', ['RB', 'LB']],
-  ['Sophia F.', 'R', ['CM', 'DM']], ['Violet F.', 'R', ['RB', 'LB']],
+  ['Violet M.', 'R', ['DCM']], ['Emily M.', 'R', ['AM', 'CB']], ['Penelope T.', 'L', ['LW']],
+  ['Ayana B.', 'L', ['LW', 'AM', 'LB']], ['Genevieve E.', 'R', ['RB', 'LB']],
+  ['Sophia F.', 'R', ['AM', 'DCM']], ['Violet F.', 'R', ['RB', 'LB']],
   ['Isobel M.', 'R', ['ST', 'GK']], ['Ryann M.', 'L', ['LB']], ['Eliza M.', 'R', ['ST', 'RW']],
 ];
 
@@ -222,11 +222,32 @@ test('pins are honored as hard constraints', () => {
   const game = seedGame();
   const st = LM.state;
   // Pin a specific outfield player into a specific window-0 slot they can play.
-  const violetM = st.players.find((p) => p.name === 'Violet M.'); // DM-only
+  const violetM = st.players.find((p) => p.name === 'Violet M.'); // DCM-only
   LM.setPin(game, 0, 'DM', violetM.id);
   assert.equal(LM.countPins(game), 1);
   game.plan = LM.generatePlan(game);
   assert.equal(game.plan.segments[0].slots.DM, violetM.id, 'pinned cell must be left exactly as pinned');
+});
+
+test('roster positions model two AM slots and one DCM slot', () => {
+  assert.deepEqual(Array.from(LM.POSITIONS), ['GK', 'RB', 'CB', 'LB', 'DCM', 'AM', 'RW', 'ST', 'LW']);
+  assert.equal(LM.SLOTS.filter((slot) => slot.pos === 'AM').length, 2);
+  assert.equal(LM.SLOTS.filter((slot) => slot.pos === 'DCM').length, 1);
+});
+
+test('legacy CM and DM roster positions migrate to AM and DCM', () => {
+  const player = LM.state.players.find((p) => p.name === 'Nora D.');
+  const previousPositions = player.positions;
+  const previousVersion = LM.state.seedVersion;
+  player.positions = ['CM', 'DM', 'AM'];
+  LM.state.seedVersion = 3;
+
+  LM.migrateRoster();
+
+  assert.deepEqual(Array.from(player.positions), ['AM', 'DCM']);
+  assert.equal(LM.state.seedVersion, 4);
+  player.positions = previousPositions;
+  LM.state.seedVersion = previousVersion;
 });
 
 test('unavailable players never appear and the plan still fills every slot', () => {

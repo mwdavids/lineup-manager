@@ -726,16 +726,16 @@
    ============================================================ */
 
 /* ---------- Constants ---------- */
-var POSITIONS = ['GK','RB','CB','LB','DM','AM','CM','RW','ST','LW'];
+var POSITIONS = ['GK','RB','CB','LB','DCM','AM','RW','ST','LW'];
 var SLOTS = [
   {key:'GK', pos:'GK', label:'GK',     side:'C'},
   {key:'RB', pos:'RB', label:'RB',     side:'R'},
   {key:'CBR',pos:'CB', label:'CB (R)', side:'C'},
   {key:'CBL',pos:'CB', label:'CB (L)', side:'L'},
   {key:'LB', pos:'LB', label:'LB',     side:'L'},
-  {key:'DM', pos:'DM', label:'DM',     side:'C'},
-  {key:'AMR',pos:'AM', label:'AM (R)', side:'C', accepts:['AM','CM']},
-  {key:'AML',pos:'AM', label:'AM (L)', side:'C', accepts:['AM','CM']},
+  {key:'DM', pos:'DCM', label:'DCM',   side:'C'},
+  {key:'AMR',pos:'AM', label:'AM (R)', side:'C'},
+  {key:'AML',pos:'AM', label:'AM (L)', side:'C'},
   {key:'RW', pos:'RW', label:'RW',     side:'R'},
   {key:'ST', pos:'ST', label:'ST',     side:'C'},
   {key:'LW', pos:'LW', label:'LW',     side:'L'}
@@ -753,21 +753,21 @@ var WARN_SECONDS = 60; // sub warning before period end
 
 /* ---------- Seed roster ---------- */
 var SEED = [
-  ['Eleanor C.','R',['GK','RW','DM']],
-  ['Nora D.','R',['RB','CM']],
-  ['Mackenzie D.','R',['CM','CB']],
+  ['Eleanor C.','R',['GK','RW','DCM']],
+  ['Nora D.','R',['RB','AM']],
+  ['Mackenzie D.','R',['AM','CB']],
   ['Teigan E.','R',['CB','RB']],
   ['Finley G.','R',['ST','CB']],
   ['Caroline G.','R',['RW']],
   ['Haley H.','R',['CB']],
   ['Isla K.','L',['CB','LB']],
   ['Finn','R',['RB']],
-  ['Violet M.','R',['DM']],
-  ['Emily M.','R',['CM','CB']],
+  ['Violet M.','R',['DCM']],
+  ['Emily M.','R',['AM','CB']],
   ['Penelope T.','L',['LW']],
-  ['Ayana B.','L',['LW','CM','LB']],
+  ['Ayana B.','L',['LW','AM','LB']],
   ['Genevieve E.','R',['RB','LB']],
-  ['Sophia F.','R',['CM','DM']],
+  ['Sophia F.','R',['AM','DCM']],
   ['Violet F.','R',['RB','LB']],
   ['Isobel M.','R',['ST','GK']],
   ['Ryann M.','L',['LB']],
@@ -781,7 +781,7 @@ var undoStack = [];
 
 /* ---------- Storage ---------- */
 var LS_KEY = 'lineupManager.v4';
-var SEED_VERSION = 3; // bump when the seeded roster changes; migrations run in-place
+var SEED_VERSION = 4; // bump when the seeded roster changes; migrations run in-place
 // One-time, non-destructive roster fixes applied to already-saved data. Keyed by
 // SEED_VERSION so they run once and keep player ids stable (saved games/pins that
 // reference players BY ID keep working).
@@ -797,6 +797,16 @@ function migrateRoster(){
         pl.positions = pl.positions || [];
         if(pl.positions.indexOf('LB')<0) pl.positions.push('LB');
       }
+    });
+  }
+  if(from<4){
+    (state.players||[]).forEach(function(pl){
+      var positions=[];
+      (pl.positions||[]).forEach(function(pos){
+        var normalized=pos==='DM'?'DCM':(pos==='CM'?'AM':pos);
+        if(positions.indexOf(normalized)<0) positions.push(normalized);
+      });
+      pl.positions=positions;
     });
   }
   state.seedVersion = SEED_VERSION;
@@ -1092,7 +1102,7 @@ function doUndo(){
 function eligRank(player, pos){ // 0 primary,1,2 ; -1 not eligible
   return player.positions.indexOf(pos);
 }
-// Rank against a SLOT, honoring accepted positions (e.g. an AM slot accepts CM).
+// Rank against a SLOT, honoring accepted positions.
 // Returns the best (lowest) rank across accepted positions, or -1 if none.
 function slotEligRank(player, slot){
   var accepts = slot.accepts || [slot.pos];
@@ -4641,7 +4651,7 @@ window.__LM__ = {
   buildSegments:buildSegments, buildGkSchedule:buildGkSchedule,
   segTransition:segTransition, slotEligRank:slotEligRank, PITCH:PITCH,
   segInfo:segInfo, playerPathCaption:playerPathCaption, renderPlanPitch:renderPlanPitch,
-  SLOTS:SLOTS, byId:byId,
+  POSITIONS:POSITIONS, SLOTS:SLOTS, byId:byId, migrateRoster:migrateRoster,
   encodePayload:encodePayload, decodePayload:decodePayload,
   makeGamePayload:makeGamePayload, makeRosterPayload:makeRosterPayload, makeFullPayload:makeFullPayload,
   shareUrl:shareUrl, routeImport:routeImport, checkHashImport:checkHashImport,
