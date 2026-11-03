@@ -387,6 +387,9 @@ plans**, **no app registration and no secrets**. From **Game Setup → Team sync
 
 > Account sign-in relies on same-origin auth cookies, so it works only when the app is opened
 > **from your Static Web App URL** (not `file://` or a different host).
+> Authentication requests always go to the network, never the offline cache, so a completed
+> sign-in is recognized immediately. After an app update, tap **Reload** in the update banner
+> to activate the latest offline behavior.
 
 ### Connect a team (legacy passcode)
 
