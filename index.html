@@ -4014,7 +4014,7 @@ async function accCheckAuth(){
   var a=Sync.account;
   if(!syncOnline()){ a.checked=true; renderSyncUI(); return; }
   try{
-    var res=await fetch('/.auth/me', {credentials:'same-origin'});
+    var res=await fetch('/.auth/me', {credentials:'same-origin', cache:'no-store'});
     var j=await res.json();
     var cp=j&&(j.clientPrincipal||j.ClientPrincipal||null);
     a.loggedIn=!!cp;

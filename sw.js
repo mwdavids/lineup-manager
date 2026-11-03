@@ -3,9 +3,9 @@
    - Navigations / index.html: network-first (fresh app when online, cached when offline)
      so a redeploy is never permanently masked by the cache.
    - Other same-origin static assets (manifest, icons): stale-while-revalidate.
-   - /api/* and cross-origin: never touched — pass straight to the network (same as before).
+   - /api/*, /.auth/* and cross-origin: never touched — pass straight to the network.
 */
-var VERSION = 'lineup-v1';
+var VERSION = 'lineup-v2';
 var SHELL = [
   './',
   './index.html',
@@ -51,9 +51,10 @@ self.addEventListener('fetch', function(e){
   if(req.method !== 'GET') return;
 
   var url = new URL(req.url);
-  // Same-origin only; never cache the API.
+  // Auth responses and redirects must never reuse a cached sign-in state.
   if(url.origin !== self.location.origin) return;
   if(url.pathname.indexOf('/api/') === 0 || url.pathname === '/api') return;
+  if(url.pathname.indexOf('/.auth/') === 0 || url.pathname === '/.auth') return;
 
   if(isNavigation(req)){
     // Network-first: fresh app when online, cached shell when offline.
